@@ -16,22 +16,19 @@ book:
       chapters:
         - chapters/01-bayesian-thinking.qmd
         - chapters/02-pymc-fundamentals.qmd
-        - chapters/03-mcmc-diagnostics.qmd
-    - part: "Part II --- Core Models"
+        - chapters/03-linear-models.qmd
+    - part: "Part II --- Core Methods"
       chapters:
-        - chapters/04-linear-models.qmd
-        - chapters/05-glms.qmd
-        - chapters/06-hierarchical-models.qmd
-    - part: "Part III --- The Bayesian Workflow"
+        - chapters/04-hierarchical-models.qmd
+        - chapters/05-bayesian-workflow.qmd
+        - chapters/06-mcmc-diagnostics.qmd
+        - chapters/07-gaussian-processes.qmd
+    - part: "Part III --- Advanced and Applied"
       chapters:
-        - chapters/07-bayesian-workflow.qmd
-        - chapters/08-model-comparison.qmd
-    - part: "Part IV --- Advanced Methods"
-      chapters:
-        - chapters/09-gaussian-processes.qmd
-        - chapters/10-nonparametric-bayes.qmd
-        - chapters/11-causal-inference.qmd
-        - chapters/12-business-applications.qmd
+        - chapters/08-nonparametric-bayes.qmd
+        - chapters/09-causal-inference.qmd
+        - chapters/10-business-applications.qmd
+        - chapters/11-advanced-topics.qmd
 
 format:
   html:

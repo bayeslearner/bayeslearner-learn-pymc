@@ -1,0 +1,1347 @@
+# Gaussian Processes: Flexible Nonlinear Regression
+
+You have a scatter plot that clearly curves, but you do not know
+whether the relationship is quadratic, logarithmic, sinusoidal, or
+something with no closed-form name. You could guess a parametric
+form, fit it, and hope for the best. But what if you pick the wrong
+one? And what if the true shape changes character across the input
+range---gentle in one region, steep in another?
+
+A Gaussian process lets you sidestep the entire model-selection
+problem. Instead of choosing a specific function, you place a
+probability distribution over *all* smooth functions and let the
+data decide which ones are plausible. The result is a flexible curve
+with uncertainty bands that widen where you have less data and
+tighten where you have more---exactly the behavior you want from a
+regression model that is honest about what it knows.
+
+This chapter builds your understanding of Gaussian processes from
+the ground up: what they are, how their kernel (covariance function)
+encodes your prior beliefs about the shape of the function, and how
+to fit and predict with them in PyMC. You will also learn when *not*
+to use GPs---they carry a steep computational cost that makes them
+impractical for large datasets without approximation tricks.
+
+```{python}
+#| label: setup
+#| code-fold: true
+#| code-summary: "Imports and setup"
+import pymc as pm
+import arviz as az
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from numpy.random import default_rng
+from scipy.spatial.distance import cdist
+
+rng = default_rng(42)
+print(f"PyMC {pm.__version__}, ArviZ {az.__version__}")
+```
+
+
+## The Problem: Regression Without a Parametric Form
+
+Standard regression forces you to commit to a functional form before
+you see the fit. Linear regression assumes a straight line.
+Polynomial regression assumes a global polynomial. Even splines
+require you to choose knot placement. If the true relationship does
+not match your chosen form, the model is wrong everywhere---not just
+at the edges, but through the middle of your data.
+
+Consider a concrete scenario. You are tracking how a soil sensor's
+reading changes with depth. The relationship is clearly nonlinear:
+the signal rises steeply in the first few meters, flattens out, and
+then oscillates with geological layers deeper down. No single
+parametric family captures this behavior. You could try a degree-7
+polynomial, but it would oscillate wildly beyond your deepest
+measurement. You could try a piecewise model, but where should the
+breakpoints go?
+
+What you really want is a model that says: "I believe the function
+is smooth, but I don't know its shape. Let me look at the data and
+figure out what smooth functions are consistent with what I see."
+That is exactly what a Gaussian process does.
+
+To make this concrete, let's generate some data from a wiggly
+function and pretend we don't know the true form:
+
+```{python}
+#| label: generate-toy-data
+def true_function(x):
+    """An unknown function we are trying to recover."""
+    return (
+        np.sin(1.5 * x)
+        + 0.4 * np.cos(3.5 * x)
+    )
+
+n_train = 25
+X_train = np.sort(
+    rng.uniform(-3, 3, size=n_train)
+)
+y_train = (
+    true_function(X_train)
+    + rng.normal(scale=0.2, size=n_train)
+)
+
+X_plot = np.linspace(-4, 4, 200)
+```
+
+```{python}
+#| label: fig-toy-data
+#| fig-cap: "Noisy observations from an unknown nonlinear function. What shape should we fit?"
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(
+    X_plot, true_function(X_plot),
+    ls="--", color="C2", lw=1.5,
+    label="True function (unknown)",
+)
+ax.scatter(
+    X_train, y_train,
+    s=30, color="C0", zorder=3,
+    label="Observed data",
+)
+ax.set_xlabel("x")
+ax.set_ylabel("y")
+ax.legend(fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+Looking at this plot, you might try a polynomial. But which degree?
+Too low and you underfit. Too high and the tails explode. A Gaussian
+process avoids this choice entirely.
+
+
+## What Is a Gaussian Process?
+
+A Gaussian process (GP) is a probability distribution over
+functions. That sentence is worth sitting with. In standard
+regression, you have a distribution over *parameter values*---the
+slope might be 2.1 ± 0.3, for example. In a GP, the entire
+*function* is the random object. You are not estimating a few
+numbers; you are estimating a curve.
+
+The formal definition is:
+
+> A Gaussian process is a collection of random variables, any
+> finite number of which have a joint multivariate normal
+> distribution.
+
+Here is what that means in practice. Suppose you pick five input
+points $x_1, \ldots, x_5$. A GP says that the corresponding
+function values $f(x_1), \ldots, f(x_5)$ follow a five-dimensional
+multivariate normal distribution. Pick ten points, and you get a
+ten-dimensional multivariate normal. Pick a thousand, and you get a
+thousand-dimensional one. The GP is the rule that tells you the
+mean and covariance of that joint normal for *any* set of input
+points.
+
+A GP is completely specified by two ingredients:
+
+1. **The mean function** $m(x)$: what you expect the function value
+   to be at each input, before seeing any data. In practice, this
+   is almost always set to zero (or a simple baseline), because the
+   kernel carries most of the information.
+
+2. **The kernel** (covariance function) $k(x, x')$: how correlated
+   the function values at two inputs $x$ and $x'$ are. This is where
+   your beliefs live. If you believe the function is smooth, you
+   pick a kernel that assigns high correlation to nearby points. If
+   you believe it is periodic, you pick a kernel that makes points
+   one period apart highly correlated.
+
+We write:
+$$
+f \sim \mathcal{GP}\bigl(m(x),\; k(x, x')\bigr)
+$$
+
+The connection to the multivariate normal is direct. For any
+collection of inputs $\mathbf{X} = [x_1, \ldots, x_n]^T$, the
+vector of function values is:
+$$
+\mathbf{f} = [f(x_1), \ldots, f(x_n)]^T
+  \sim \mathcal{N}(\boldsymbol{\mu},\; \mathbf{K})
+$$
+where $\mu_i = m(x_i)$ and $K_{ij} = k(x_i, x_j)$.
+
+Think of it this way: the kernel is a recipe for building a
+covariance matrix. You give it a set of inputs, and it hands you
+back a matrix. Different kernels produce different matrices, and
+different matrices produce different families of functions. The
+kernel is the GP's personality.
+
+
+## Kernels: Encoding Prior Beliefs
+
+The kernel is the most important modeling choice in a GP. It
+determines whether the functions you draw are smooth or jagged,
+periodic or aperiodic, locally varying or globally rigid. Let's tour
+the kernels you will use most often.
+
+### Squared exponential (RBF)
+
+The squared exponential kernel, also called the radial basis
+function (RBF) or exponentiated quadratic, is the default choice:
+$$
+k_{\text{SE}}(x, x') = \eta^2 \exp\!\Bigl(
+  -\frac{(x - x')^2}{2\ell^2}\Bigr)
+$$
+It has two hyperparameters:
+
+- **$\eta^2$ (amplitude):** controls how far the function wanders
+  from the mean. Larger values produce bigger vertical swings.
+- **$\ell$ (lengthscale):** controls how quickly the function can
+  change. A small lengthscale allows rapid wiggles; a large one
+  enforces gentle, slow-moving curves.
+
+Functions drawn from an SE kernel are infinitely differentiable
+---they are as smooth as a function can be. This is both a
+strength (no jagged artifacts) and a weakness (real data is
+sometimes rougher than the SE allows).
+
+### Matérn
+
+The Matérn family generalizes the SE by adding a smoothness
+parameter $\nu$. The most common variants are:
+
+- **Matérn-3/2** ($\nu = 3/2$): once differentiable. Good for
+  functions that are smooth but have occasional sharp turns.
+- **Matérn-5/2** ($\nu = 5/2$): twice differentiable. A practical
+  middle ground between the SE's extreme smoothness and the
+  Matérn-3/2's occasional sharpness.
+
+As $\nu \to \infty$, the Matérn converges to the SE. In practice,
+if you are unsure about smoothness, Matérn-5/2 is a safer default
+than the SE.
+
+### Periodic
+
+The periodic kernel produces functions that repeat:
+$$
+k_{\text{Per}}(x, x') = \eta^2 \exp\!\Bigl(
+  -\frac{2 \sin^2(\pi |x - x'| / p)}{\ell^2}\Bigr)
+$$
+where $p$ is the period. This is the natural choice for seasonal
+patterns---temperature over a year, sales over a week, tidal
+heights over a day.
+
+### Linear
+
+The linear kernel produces functions that are straight lines (with
+uncertainty about the slope and intercept). On its own, it is just
+linear regression. Its power comes from combination: multiplying a
+periodic kernel by a linear kernel produces a function whose
+seasonal amplitude grows over time.
+
+### Combining kernels
+
+You can add and multiply kernels to build richer models:
+
+- **Addition** ($k_1 + k_2$): the function is the *sum* of two
+  independent components. Use this to model a smooth trend plus a
+  periodic component.
+- **Multiplication** ($k_1 \times k_2$): one component *modulates*
+  the other. A periodic kernel times an SE kernel produces
+  periodicity that decays away from the center.
+
+This composability is one of the most powerful features of GPs.
+Instead of guessing a parametric form, you assemble a kernel that
+encodes your structural beliefs (there is a trend, there is
+seasonality, the seasonality evolves) and let the data fill in the
+details.
+
+### Drawing from GP priors
+
+Before fitting any data, let's visualize what different kernels
+"believe." We will draw random functions from GP priors and see
+how the kernel shapes them.
+
+```{python}
+#| label: kernel-functions
+def build_kernel_matrix(X, kernel_fn):
+    """Evaluate a kernel function on a grid."""
+    X = X.reshape(-1, 1)
+    K = kernel_fn(X, X)
+    # Add a tiny nugget for numerical stability
+    K += 1e-6 * np.eye(len(X))
+    return K
+
+def se_kernel(X1, X2, ls=1.0, eta=1.0):
+    """Squared exponential kernel."""
+    sq_dist = cdist(X1, X2, metric="sqeuclidean")
+    return eta**2 * np.exp(-0.5 * sq_dist / ls**2)
+
+def matern32_kernel(X1, X2, ls=1.0, eta=1.0):
+    """Matérn-3/2 kernel."""
+    dist = cdist(X1, X2, metric="euclidean")
+    r = np.sqrt(3) * dist / ls
+    return eta**2 * (1 + r) * np.exp(-r)
+
+def periodic_kernel(
+    X1, X2, period=2.0, ls=1.0, eta=1.0
+):
+    """Periodic kernel."""
+    dist = cdist(X1, X2, metric="euclidean")
+    return eta**2 * np.exp(
+        -2.0 * np.sin(np.pi * dist / period)**2
+        / ls**2
+    )
+```
+
+```{python}
+#| label: fig-kernel-priors
+#| fig-cap: "Random functions drawn from GP priors with different kernels. The kernel determines the character of the functions."
+X_grid = np.linspace(-5, 5, 300)
+n_draws = 5
+
+kernels = {
+    "SE (ℓ=1.0)": lambda X1, X2: se_kernel(
+        X1, X2, ls=1.0
+    ),
+    "SE (ℓ=0.3)": lambda X1, X2: se_kernel(
+        X1, X2, ls=0.3
+    ),
+    "Matérn-3/2": lambda X1, X2: matern32_kernel(
+        X1, X2, ls=1.0
+    ),
+    "Periodic (p=2)": lambda X1, X2: periodic_kernel(
+        X1, X2, period=2.0, ls=1.0
+    ),
+}
+
+fig, axes = plt.subplots(
+    2, 2, figsize=(10, 6), sharex=True
+)
+for ax, (name, kfn) in zip(axes.ravel(), kernels.items()):
+    K = build_kernel_matrix(X_grid, kfn)
+    samples = rng.multivariate_normal(
+        mean=np.zeros(len(X_grid)),
+        cov=K,
+        size=n_draws,
+    )
+    for s in samples:
+        ax.plot(X_grid, s, lw=0.8, alpha=0.8)
+    ax.set_title(name, fontsize=10)
+    ax.set_ylabel("f(x)")
+ax.set_xlabel("x")
+axes[1, 0].set_xlabel("x")
+fig.tight_layout()
+plt.show()
+```
+
+Study this figure. The top-left panel (SE with $\ell = 1$) shows
+gentle, smooth curves. The top-right panel (SE with $\ell = 0.3$)
+shows faster wiggles---the shorter lengthscale lets the function
+change direction more quickly. The Matérn-3/2 draws have occasional
+sharper turns compared to the SE. And the periodic kernel produces
+functions that visibly repeat.
+
+These are your *prior beliefs* before seeing data. When you fit a
+GP, the posterior concentrates on the subset of these functions that
+are consistent with the observations.
+
+
+## GP Regression in PyMC
+
+PyMC provides two main GP classes for regression:
+
+- **`pm.gp.Marginal`**: analytically integrates out the latent
+  function values and works directly with the observed data. This
+  is more efficient for regression with Gaussian noise and is the
+  one you will use most often.
+- **`pm.gp.Latent`**: explicitly represents the latent function
+  values as parameters. This is needed when the likelihood is not
+  Gaussian (e.g., classification), but is more computationally
+  expensive.
+
+Let's fit a GP to our toy data using `pm.gp.Marginal`. The
+workflow has four steps:
+
+1. Define priors on the kernel hyperparameters (lengthscale,
+   amplitude, noise).
+2. Build the kernel from those priors.
+3. Create the GP and register the marginal likelihood.
+4. Sample from the posterior.
+
+```{python}
+#| label: gp-marginal-model
+X_train_2d = X_train[:, None]  # PyMC expects (n, d)
+
+with pm.Model() as gp_model:
+    # --- Hyperparameter priors ---
+    ell = pm.InverseGamma(
+        "ell", alpha=2.0, beta=2.0
+    )
+    eta = pm.HalfNormal("eta", sigma=2.0)
+    sigma = pm.HalfNormal("sigma", sigma=0.5)
+
+    # --- Kernel ---
+    cov = eta**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell
+    )
+
+    # --- GP with marginal likelihood ---
+    gp = pm.gp.Marginal(cov_func=cov)
+    gp.marginal_likelihood(
+        "y_obs",
+        X=X_train_2d,
+        y=y_train,
+        sigma=sigma,
+    )
+
+    # --- Sample ---
+    trace = pm.sample(
+        draws=1000,
+        tune=1000,
+        chains=4,
+        random_seed=rng,
+    )
+```
+
+Let's unpack the key choices:
+
+**Lengthscale prior.** We used `InverseGamma(2, 2)`, which is a
+common weakly informative choice. It puts most mass between
+roughly 0.3 and 5, discouraging both implausibly short
+lengthscales (which would fit noise) and implausibly long ones
+(which would flatten the function to a line). Getting the
+lengthscale prior right is the single most important modeling
+decision in GP work---Bill Engels, a principal data scientist at
+PyMC Labs, emphasizes that "you need to be really mindful and
+careful about how you're setting priors on the GP
+hyperparameters."
+
+**Amplitude prior.** `HalfNormal(2)` allows the function to have
+moderate vertical range without going wild.
+
+**Noise prior.** `HalfNormal(0.5)` reflects our belief that the
+observations are measured with modest noise.
+
+**Kernel choice.** We started with a single `ExpQuad` (squared
+exponential) kernel. This is the GP equivalent of "start with a
+linear model"---a reasonable default that you can elaborate later.
+
+Let's check the diagnostics:
+
+```{python}
+#| label: gp-diagnostics
+az.summary(
+    trace,
+    var_names=["ell", "eta", "sigma"],
+    round_to=3,
+)
+```
+
+Look for `r_hat` values close to 1.0 and `ess_bulk` / `ess_tail`
+values in the hundreds. If the lengthscale posterior is pushed hard
+against its prior boundary, your prior may be too restrictive.
+
+
+## Making Predictions
+
+Fitting the model estimated the kernel hyperparameters. Now we want
+the actual regression curve: the posterior mean and uncertainty at
+new input locations.
+
+In PyMC, predictions use `gp.conditional()`, which computes the
+GP posterior conditioned on the observed data *and* the learned
+hyperparameters. You call it inside the model context, then run
+`sample_posterior_predictive` to propagate the hyperparameter
+uncertainty through to the predictions.
+
+```{python}
+#| label: gp-predictions
+X_new = np.linspace(-4, 4, 200)[:, None]
+
+with gp_model:
+    f_pred = gp.conditional(
+        "f_pred", Xnew=X_new
+    )
+    pred_samples = pm.sample_posterior_predictive(
+        trace,
+        var_names=["f_pred"],
+        random_seed=rng,
+    )
+```
+
+```{python}
+#| label: fig-gp-posterior
+#| fig-cap: "GP posterior: the mean prediction (solid line) with 94% credible band. Uncertainty widens away from the data."
+f_post = az.extract(
+    pred_samples, group="posterior_predictive"
+)["f_pred"].values
+
+f_mean = f_post.mean(axis=1)
+f_low = np.percentile(f_post, 3, axis=1)
+f_high = np.percentile(f_post, 97, axis=1)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.fill_between(
+    X_new.ravel(), f_low, f_high,
+    alpha=0.25, color="C1",
+    label="94% credible band",
+)
+ax.plot(
+    X_new.ravel(), f_mean,
+    color="C1", lw=2,
+    label="Posterior mean",
+)
+ax.plot(
+    X_plot, true_function(X_plot),
+    ls="--", color="C2", lw=1.5,
+    label="True function",
+)
+ax.scatter(
+    X_train, y_train,
+    s=30, color="C0", zorder=3,
+    label="Observations",
+)
+ax.set_xlabel("x")
+ax.set_ylabel("y")
+ax.legend(fontsize=9, loc="upper right")
+fig.tight_layout()
+plt.show()
+```
+
+Three things to notice:
+
+1. **The mean tracks the data.** Where observations are dense, the
+   posterior mean hugs the true function closely.
+2. **Uncertainty widens at the edges.** Beyond the training data
+   (past $x = 3$ and before $x = -3$), the credible band fans out.
+   The GP is telling you: "I have no data here, so I am reverting
+   to my prior uncertainty."
+3. **Uncertainty narrows near observations.** Between closely
+   spaced training points, the band is tight. The GP is
+   interpolating with confidence.
+
+This is the hallmark of GP regression: *calibrated local
+uncertainty*. Unlike a polynomial that confidently extrapolates a
+wild curve into uncharted territory, the GP admits ignorance where
+it has no evidence.
+
+
+## Choosing the Kernel
+
+Which kernel should you use? Here are practical rules of thumb:
+
+**Start with the squared exponential.** It is the simplest
+smooth kernel and works surprisingly well for many problems. If
+the fit looks good, you are done.
+
+**Switch to Matérn-5/2 if the SE over-smooths.** Real-world
+functions are often not infinitely differentiable. The Matérn-5/2
+is twice differentiable---smooth enough to avoid jitter, rough
+enough to follow data that has sharper features. Many practitioners
+treat Matérn-5/2 as their default instead of the SE.
+
+**Add a periodic kernel if you see seasonality.** If the data has
+a clear repeating pattern (daily, weekly, annual), add a periodic
+component: `cov_trend + cov_periodic`. The period is often known
+from domain knowledge (12 months, 7 days), so you can fix it
+rather than estimating it.
+
+**Use a linear kernel for trends.** If the data has a long-term
+upward or downward drift, a linear kernel captures this. Combined
+with other kernels via addition, it separates the trend from the
+local structure.
+
+**Multiply kernels to model interactions.** A common pattern is
+`Periodic × ExpQuad`, which produces periodicity that decays away
+from the center (or, equivalently, evolves slowly over time). This
+is more realistic than pure periodicity for most real-world data.
+
+### Comparing kernels with LOO
+
+When you have two candidate kernels and no strong domain reason to
+prefer one, use leave-one-out cross-validation (LOO) via ArviZ:
+
+```{python}
+#| label: loo-comparison
+#| eval: false
+# After fitting gp_model_1 and gp_model_2:
+comp = az.compare(
+    {"SE": trace_se, "Matern52": trace_m52},
+    ic="loo",
+)
+print(comp)
+```
+
+The model with the higher `elpd_loo` (expected log predictive
+density) fits the data better out of sample. But treat small
+differences cautiously---if the standard error of the difference
+is larger than the difference itself, the data cannot distinguish
+the two kernels, and you should prefer whichever is simpler.
+
+
+## Computational Challenges
+
+GPs have an inconvenient cost: fitting requires inverting (or
+decomposing) the $n \times n$ kernel matrix, which is $O(n^3)$ in
+time and $O(n^2)$ in memory. For 100 observations, this is
+instant. For 1,000, it takes a few seconds. For 10,000, it
+becomes painful. For 100,000, it is infeasible without
+approximations.
+
+As Bill Engels puts it: "GPs are great and everybody would use them
+all the time if it weren't for" the $O(n^3)$ scaling---"just a
+small problem."
+
+### When to use GPs vs. parametric models
+
+Use a GP when:
+
+- You have fewer than ~1,000 observations (exact GP) or fewer
+  than ~10,000 (with approximations).
+- You genuinely do not know the functional form.
+- You need well-calibrated uncertainty, not just a point
+  prediction.
+
+Use a parametric model when:
+
+- You have a strong theory about the functional form (physics,
+  biology, economics).
+- You have a large dataset and a simple relationship.
+- Interpretability of individual parameters matters more than
+  flexibility.
+
+### Sparse approximations: inducing points
+
+The idea behind sparse GPs is simple: instead of using all $n$
+training points to define the kernel matrix, use a smaller set of
+$m \ll n$ "inducing points" $\mathbf{X}_u$. The GP is approximated
+by conditioning on these inducing points, reducing the cost to
+$O(nm^2)$.
+
+PyMC provides this via `pm.gp.MarginalSparse`:
+
+```{python}
+#| label: sparse-gp
+#| eval: false
+n_inducing = 15
+Xu = np.linspace(
+    X_train.min(), X_train.max(), n_inducing
+)[:, None]
+
+with pm.Model() as sparse_model:
+    ell = pm.InverseGamma("ell", alpha=2, beta=2)
+    eta = pm.HalfNormal("eta", sigma=2)
+    sigma = pm.HalfNormal("sigma", sigma=0.5)
+
+    cov = eta**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell
+    )
+    gp = pm.gp.MarginalSparse(
+        cov_func=cov, approx="FITC"
+    )
+    gp.marginal_likelihood(
+        "y_obs",
+        X=X_train_2d,
+        Xu=Xu,
+        y=y_train,
+        sigma=sigma,
+    )
+    trace_sparse = pm.sample(
+        draws=1000, tune=1000, random_seed=rng
+    )
+```
+
+The `approx` parameter selects the approximation method: `"FITC"`
+(Fully Independent Training Conditional) is the most common, and
+`"VFE"` (Variational Free Energy) is a tighter bound. Start with
+FITC; switch to VFE if you want a less biased (but sometimes
+harder-to-optimize) approximation.
+
+The inducing points $\mathbf{X}_u$ are typically initialized as a
+uniform grid over the input range. With 25 training points, sparse
+approximations are overkill---you would use them when $n$ reaches
+the thousands.
+
+### HSGP: Hilbert Space Gaussian Process
+
+PyMC also offers `pm.gp.HSGP`, a spectral approximation that
+represents the GP using a truncated basis-function expansion. It
+scales as $O(nm)$ where $m$ is the number of basis functions, and
+avoids forming the kernel matrix entirely. HSGP works well for
+low-dimensional inputs (1D or 2D) and is the recommended
+approximation for time-series applications:
+
+```{python}
+#| label: hsgp-example
+#| eval: false
+with pm.Model() as hsgp_model:
+    ell = pm.InverseGamma("ell", alpha=2, beta=2)
+    eta = pm.HalfNormal("eta", sigma=2)
+    sigma = pm.HalfNormal("sigma", sigma=0.5)
+
+    cov = eta**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell
+    )
+    gp = pm.gp.HSGP(
+        m=[20], c=1.3, cov_func=cov
+    )
+    f = gp.prior("f", X=X_train_2d)
+
+    y_obs = pm.Normal(
+        "y_obs", mu=f, sigma=sigma,
+        observed=y_train,
+    )
+    trace_hsgp = pm.sample(
+        draws=1000, tune=1000, random_seed=rng
+    )
+```
+
+The parameter `m` is the number of basis functions (higher = more
+accurate but slower), and `c` controls the boundary padding. With
+`m=[20]` and `c=1.3`, you get a good approximation for most 1D
+problems.
+
+
+## GPs for Classification
+
+So far we have used GPs for regression with continuous outcomes.
+But GPs can also handle binary classification. The idea: use a GP
+as a *latent function* and pass it through a sigmoid (inverse
+logit) to get a probability, then use a Bernoulli likelihood.
+
+This requires `pm.gp.Latent` because the likelihood is no longer
+Gaussian, so the marginal likelihood trick does not apply.
+
+```{python}
+#| label: gp-classification-data
+# Simulate binary classification data
+n_cls = 60
+X_cls = np.sort(
+    rng.uniform(-3, 3, size=n_cls)
+)
+latent = 2.0 * np.sin(1.5 * X_cls)
+prob = 1.0 / (1.0 + np.exp(-latent))
+y_cls = rng.binomial(n=1, p=prob, size=n_cls)
+```
+
+```{python}
+#| label: gp-classification-model
+X_cls_2d = X_cls[:, None]
+
+with pm.Model() as cls_model:
+    ell = pm.InverseGamma(
+        "ell", alpha=2.0, beta=2.0
+    )
+    eta = pm.HalfNormal("eta", sigma=3.0)
+
+    cov = eta**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell
+    )
+    gp = pm.gp.Latent(cov_func=cov)
+    f = gp.prior("f", X=X_cls_2d)
+
+    p = pm.math.sigmoid(f)
+    y_obs = pm.Bernoulli(
+        "y_obs", p=p, observed=y_cls
+    )
+
+    trace_cls = pm.sample(
+        draws=1000,
+        tune=1500,
+        chains=4,
+        random_seed=rng,
+        target_accept=0.9,
+    )
+```
+
+```{python}
+#| label: fig-gp-classification
+#| fig-cap: "GP classification: the latent GP (right axis) is passed through a sigmoid to produce class probabilities (shaded band)."
+X_cls_new = np.linspace(-3.5, 3.5, 200)[:, None]
+
+with cls_model:
+    f_cls_pred = gp.conditional(
+        "f_cls_pred", Xnew=X_cls_new
+    )
+    pred_cls = pm.sample_posterior_predictive(
+        trace_cls,
+        var_names=["f_cls_pred"],
+        random_seed=rng,
+    )
+
+f_cls_post = az.extract(
+    pred_cls, group="posterior_predictive"
+)["f_cls_pred"].values
+
+p_post = 1.0 / (1.0 + np.exp(-f_cls_post))
+p_mean = p_post.mean(axis=1)
+p_low = np.percentile(p_post, 3, axis=1)
+p_high = np.percentile(p_post, 97, axis=1)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.fill_between(
+    X_cls_new.ravel(), p_low, p_high,
+    alpha=0.25, color="C1",
+    label="94% credible band",
+)
+ax.plot(
+    X_cls_new.ravel(), p_mean,
+    color="C1", lw=2,
+    label="Posterior P(y=1)",
+)
+ax.scatter(
+    X_cls[y_cls == 1],
+    np.ones(y_cls.sum()) - 0.03,
+    marker="|", s=60, color="C2",
+    label="y = 1",
+)
+ax.scatter(
+    X_cls[y_cls == 0],
+    np.zeros((y_cls == 0).sum()) + 0.03,
+    marker="|", s=60, color="C3",
+    label="y = 0",
+)
+ax.set_xlabel("x")
+ax.set_ylabel("P(y = 1)")
+ax.set_ylim(-0.1, 1.1)
+ax.legend(fontsize=9, loc="center right")
+fig.tight_layout()
+plt.show()
+```
+
+Notice that `pm.gp.Latent` is slower than `pm.gp.Marginal`
+because it samples the full vector of latent function values as
+parameters. For classification with more than a few hundred
+observations, consider the HSGP approximation instead.
+
+
+## Worked Example: Decomposing Trend and Seasonality
+
+Let's put everything together with a realistic scenario: a signal
+that has both a long-term trend and a seasonal pattern. We will
+simulate data that resembles atmospheric CO$_2$ measurements---a
+rising trend with an annual cycle superimposed.
+
+```{python}
+#| label: co2-simulate
+n_months = 180  # 15 years of monthly data
+month_idx = np.arange(n_months)
+year_frac = month_idx / 12.0
+
+# True components
+trend_true = 320 + 1.8 * year_frac + 0.015 * year_frac**2
+seasonal_true = 3.0 * np.sin(2 * np.pi * month_idx / 12.0)
+noise = rng.normal(scale=0.4, size=n_months)
+
+co2_obs = trend_true + seasonal_true + noise
+```
+
+```{python}
+#| label: fig-co2-data
+#| fig-cap: "Simulated CO₂-like data: an upward trend with annual seasonality. We will recover both components with a composite GP."
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(
+    year_frac, co2_obs,
+    lw=0.8, color="C0", alpha=0.8,
+    label="Observed",
+)
+ax.plot(
+    year_frac, trend_true,
+    ls="--", color="C2", lw=1.5,
+    label="True trend",
+)
+ax.set_xlabel("Year (from start)")
+ax.set_ylabel("CO₂ (ppm)")
+ax.legend(fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+This data has two distinct structures:
+
+1. A smooth, slowly rising trend (quadratic-ish).
+2. A periodic annual oscillation with a period of 12 months.
+
+We will model these with a composite kernel: an SE kernel for the
+long-term trend and a periodic kernel for the seasonal component.
+
+### Building the composite kernel
+
+The key insight from kernel composition: *addition means
+independent superposition*. If $f_{\text{trend}}$ is drawn from a
+GP with an SE kernel and $f_{\text{seasonal}}$ is drawn from a GP
+with a periodic kernel, then $f_{\text{trend}} + f_{\text{seasonal}}$
+is drawn from a GP whose kernel is the *sum* of the two.
+
+We add one more refinement: instead of a pure periodic kernel, we
+use $\text{Periodic} \times \text{ExpQuad}$, which allows the
+seasonal amplitude to evolve slowly over time. This is more
+realistic---in real CO$_2$ data, the seasonal swing has grown
+over the decades.
+
+```{python}
+#| label: co2-model
+X_co2 = year_frac[:, None]
+y_co2 = co2_obs
+
+with pm.Model() as co2_model:
+    # --- Trend kernel hyperparameters ---
+    ell_trend = pm.InverseGamma(
+        "ell_trend", alpha=3, beta=10
+    )
+    eta_trend = pm.HalfNormal(
+        "eta_trend", sigma=20
+    )
+
+    # --- Seasonal kernel hyperparameters ---
+    ell_seasonal = pm.InverseGamma(
+        "ell_seasonal", alpha=3, beta=1
+    )
+    eta_seasonal = pm.HalfNormal(
+        "eta_seasonal", sigma=5
+    )
+    # Period is known: 1 year = 12/12
+    period = 1.0  # in year_frac units
+
+    # --- Modulation lengthscale ---
+    ell_mod = pm.InverseGamma(
+        "ell_mod", alpha=3, beta=10
+    )
+
+    # --- Noise ---
+    sigma = pm.HalfNormal("sigma", sigma=1)
+
+    # --- Kernels ---
+    cov_trend = eta_trend**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell_trend
+    )
+    cov_seasonal = eta_seasonal**2 * (
+        pm.gp.cov.Periodic(
+            input_dim=1,
+            period=period,
+            ls=ell_seasonal,
+        )
+        * pm.gp.cov.ExpQuad(
+            input_dim=1, ls=ell_mod
+        )
+    )
+    cov_total = cov_trend + cov_seasonal
+
+    # --- GP ---
+    gp_co2 = pm.gp.Marginal(cov_func=cov_total)
+    gp_co2.marginal_likelihood(
+        "y_co2",
+        X=X_co2,
+        y=y_co2,
+        sigma=sigma,
+    )
+
+    # --- Sample ---
+    trace_co2 = pm.sample(
+        draws=1000,
+        tune=1500,
+        chains=4,
+        random_seed=rng,
+        target_accept=0.9,
+    )
+```
+
+```{python}
+#| label: co2-summary
+az.summary(
+    trace_co2,
+    var_names=[
+        "ell_trend", "eta_trend",
+        "ell_seasonal", "eta_seasonal",
+        "ell_mod", "sigma",
+    ],
+    round_to=3,
+)
+```
+
+### Forecasting
+
+Now let's predict two years into the future:
+
+```{python}
+#| label: co2-predictions
+X_future = np.linspace(
+    0, year_frac[-1] + 2, 300
+)[:, None]
+
+with co2_model:
+    f_co2_pred = gp_co2.conditional(
+        "f_co2_pred", Xnew=X_future
+    )
+    co2_preds = pm.sample_posterior_predictive(
+        trace_co2,
+        var_names=["f_co2_pred"],
+        random_seed=rng,
+    )
+```
+
+```{python}
+#| label: fig-co2-forecast
+#| fig-cap: "GP forecast of the CO₂-like signal. The model extrapolates both the upward trend and the seasonal cycle, with growing uncertainty beyond the training window."
+f_co2_post = az.extract(
+    co2_preds, group="posterior_predictive"
+)["f_co2_pred"].values
+
+f_co2_mean = f_co2_post.mean(axis=1)
+f_co2_low = np.percentile(f_co2_post, 3, axis=1)
+f_co2_high = np.percentile(
+    f_co2_post, 97, axis=1
+)
+
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.fill_between(
+    X_future.ravel(), f_co2_low, f_co2_high,
+    alpha=0.2, color="C1",
+    label="94% credible band",
+)
+ax.plot(
+    X_future.ravel(), f_co2_mean,
+    color="C1", lw=2,
+    label="Posterior mean",
+)
+ax.plot(
+    year_frac, co2_obs,
+    lw=0.6, color="C0", alpha=0.6,
+    label="Observed",
+)
+ax.axvline(
+    year_frac[-1], ls=":", color="gray",
+    lw=1, label="End of training data",
+)
+ax.set_xlabel("Year (from start)")
+ax.set_ylabel("CO₂ (ppm)")
+ax.legend(fontsize=9, loc="upper left")
+fig.tight_layout()
+plt.show()
+```
+
+The forecast continues both the upward trend and the seasonal
+oscillation. The credible band fans out beyond the training data,
+reflecting genuine uncertainty about the future. Notice that
+the seasonal component continues to oscillate predictably (the
+periodic kernel "knows" the pattern repeats), while the trend
+component grows more uncertain because there is no future data to
+anchor it.
+
+This decomposition into interpretable components---trend plus
+season---is one of the most practical applications of kernel
+composition. It gives you a structured model without requiring
+a parametric functional form for either component.
+
+
+## Exercises
+
+### Exercise 1: Effect of the lengthscale prior
+
+Refit the toy GP regression model from the first example, but
+change the lengthscale prior from `InverseGamma(2, 2)` to
+`HalfNormal(sigma=0.3)`. How does the posterior prediction change?
+Does the model over-smooth or under-smooth compared to the original?
+Plot both posterior means on the same figure.
+
+::: {.callout-tip collapse="true"}
+## Solution
+
+```{python}
+#| label: ex1-solution
+#| eval: false
+with pm.Model() as tight_model:
+    ell = pm.HalfNormal("ell", sigma=0.3)
+    eta = pm.HalfNormal("eta", sigma=2.0)
+    sigma = pm.HalfNormal("sigma", sigma=0.5)
+
+    cov = eta**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell
+    )
+    gp_tight = pm.gp.Marginal(cov_func=cov)
+    gp_tight.marginal_likelihood(
+        "y_obs",
+        X=X_train_2d,
+        y=y_train,
+        sigma=sigma,
+    )
+    trace_tight = pm.sample(
+        draws=1000, tune=1000, random_seed=rng
+    )
+
+with tight_model:
+    f_tight = gp_tight.conditional(
+        "f_tight", Xnew=X_new
+    )
+    pred_tight = pm.sample_posterior_predictive(
+        trace_tight,
+        var_names=["f_tight"],
+        random_seed=rng,
+    )
+
+f_tight_post = az.extract(
+    pred_tight, group="posterior_predictive"
+)["f_tight"].values
+f_tight_mean = f_tight_post.mean(axis=1)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(
+    X_new.ravel(), f_mean,
+    color="C1", lw=2,
+    label="InverseGamma(2,2)",
+)
+ax.plot(
+    X_new.ravel(), f_tight_mean,
+    color="C3", lw=2,
+    label="HalfNormal(0.3)",
+)
+ax.scatter(
+    X_train, y_train,
+    s=30, color="C0", zorder=3,
+)
+ax.legend(fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+The `HalfNormal(0.3)` prior concentrates the lengthscale near
+short values, producing a wiggly fit that tracks the noise.
+The `InverseGamma(2, 2)` prior allows longer lengthscales,
+producing a smoother curve. This illustrates why the lengthscale
+prior is the most consequential choice in GP modeling.
+:::
+
+
+### Exercise 2: Matérn vs. squared exponential
+
+Fit two GP models to the toy data: one with `pm.gp.cov.ExpQuad`
+and one with `pm.gp.cov.Matern52`. Compare them using `az.compare`
+with `ic="loo"`. Which kernel does LOO prefer? Plot both
+posterior means.
+
+::: {.callout-tip collapse="true"}
+## Solution
+
+```{python}
+#| label: ex2-solution
+#| eval: false
+with pm.Model() as matern_model:
+    ell = pm.InverseGamma("ell", alpha=2, beta=2)
+    eta = pm.HalfNormal("eta", sigma=2.0)
+    sigma = pm.HalfNormal("sigma", sigma=0.5)
+
+    cov = eta**2 * pm.gp.cov.Matern52(
+        input_dim=1, ls=ell
+    )
+    gp_m52 = pm.gp.Marginal(cov_func=cov)
+    gp_m52.marginal_likelihood(
+        "y_obs",
+        X=X_train_2d,
+        y=y_train,
+        sigma=sigma,
+    )
+    trace_m52 = pm.sample(
+        draws=1000, tune=1000, random_seed=rng
+    )
+
+comp = az.compare(
+    {"SE": trace, "Matern52": trace_m52},
+    ic="loo",
+)
+print(comp)
+```
+
+Since the true function is smooth (sums of sine and cosine), the
+SE and Matérn-5/2 should perform similarly. The LOO difference
+will be small relative to its standard error. When in doubt,
+default to Matérn-5/2---it is more robust to functions that are
+not perfectly smooth.
+:::
+
+
+### Exercise 3: GP with a linear trend
+
+Generate data from a linear function with Gaussian noise:
+$y = 2x + 1 + \epsilon$. Fit a GP with a *linear* kernel
+(`pm.gp.cov.Linear`). Does the GP recover the slope and intercept?
+Compare the posterior to ordinary least squares.
+
+::: {.callout-tip collapse="true"}
+## Solution
+
+```{python}
+#| label: ex3-solution
+#| eval: false
+n_lin = 40
+X_lin = np.sort(
+    rng.uniform(-3, 3, size=n_lin)
+)[:, None]
+y_lin = (
+    2.0 * X_lin.ravel()
+    + 1.0
+    + rng.normal(scale=0.5, size=n_lin)
+)
+
+with pm.Model() as linear_gp_model:
+    tau = pm.HalfNormal("tau", sigma=5)
+    sigma = pm.HalfNormal("sigma", sigma=1)
+
+    cov = tau**2 * pm.gp.cov.Linear(
+        input_dim=1, c=0
+    )
+    gp_lin = pm.gp.Marginal(cov_func=cov)
+    gp_lin.marginal_likelihood(
+        "y_obs",
+        X=X_lin,
+        y=y_lin,
+        sigma=sigma,
+    )
+    trace_lin = pm.sample(
+        draws=1000, tune=1000, random_seed=rng
+    )
+
+X_lin_new = np.linspace(-4, 4, 100)[:, None]
+with linear_gp_model:
+    f_lin = gp_lin.conditional(
+        "f_lin", Xnew=X_lin_new
+    )
+    pred_lin = pm.sample_posterior_predictive(
+        trace_lin,
+        var_names=["f_lin"],
+        random_seed=rng,
+    )
+
+f_lin_post = az.extract(
+    pred_lin, group="posterior_predictive"
+)["f_lin"].values
+f_lin_mean = f_lin_post.mean(axis=1)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(
+    X_lin_new.ravel(), f_lin_mean,
+    color="C1", lw=2, label="GP (Linear kernel)",
+)
+ax.plot(
+    X_lin_new.ravel(),
+    2 * X_lin_new.ravel() + 1,
+    ls="--", color="C2",
+    label="True: y = 2x + 1",
+)
+ax.scatter(
+    X_lin.ravel(), y_lin,
+    s=30, color="C0", zorder=3,
+)
+ax.legend(fontsize=9)
+fig.tight_layout()
+plt.show()
+```
+
+The linear kernel GP recovers a straight line because it can only
+produce linear functions. The posterior mean will be close to
+$y = 2x + 1$, matching OLS. The GP adds nothing over OLS here,
+but the linear kernel becomes useful when *combined* with other
+kernels to capture a linear trend alongside nonlinear structure.
+:::
+
+
+### Exercise 4: Forecasting with seasonality
+
+Using the CO$_2$ worked example, modify the model to use a pure
+periodic kernel (no `ExpQuad` modulation) for the seasonal
+component. Forecast five years ahead instead of two. How does
+removing the modulation affect the prediction uncertainty far into
+the future?
+
+::: {.callout-tip collapse="true"}
+## Solution
+
+```{python}
+#| label: ex4-solution
+#| eval: false
+with pm.Model() as co2_pure_model:
+    ell_trend = pm.InverseGamma(
+        "ell_trend", alpha=3, beta=10
+    )
+    eta_trend = pm.HalfNormal(
+        "eta_trend", sigma=20
+    )
+    ell_seasonal = pm.InverseGamma(
+        "ell_seasonal", alpha=3, beta=1
+    )
+    eta_seasonal = pm.HalfNormal(
+        "eta_seasonal", sigma=5
+    )
+    sigma = pm.HalfNormal("sigma", sigma=1)
+
+    cov_trend = eta_trend**2 * pm.gp.cov.ExpQuad(
+        input_dim=1, ls=ell_trend
+    )
+    # Pure periodic---no modulation
+    cov_seasonal = eta_seasonal**2 * (
+        pm.gp.cov.Periodic(
+            input_dim=1,
+            period=1.0,
+            ls=ell_seasonal,
+        )
+    )
+    cov_total = cov_trend + cov_seasonal
+
+    gp_pure = pm.gp.Marginal(cov_func=cov_total)
+    gp_pure.marginal_likelihood(
+        "y_co2",
+        X=X_co2,
+        y=y_co2,
+        sigma=sigma,
+    )
+    trace_pure = pm.sample(
+        draws=1000, tune=1500, random_seed=rng
+    )
+
+# Forecast 5 years ahead
+X_far = np.linspace(
+    0, year_frac[-1] + 5, 400
+)[:, None]
+with co2_pure_model:
+    f_far = gp_pure.conditional(
+        "f_far", Xnew=X_far
+    )
+    pred_far = pm.sample_posterior_predictive(
+        trace_pure,
+        var_names=["f_far"],
+        random_seed=rng,
+    )
+
+f_far_post = az.extract(
+    pred_far, group="posterior_predictive"
+)["f_far"].values
+f_far_mean = f_far_post.mean(axis=1)
+f_far_low = np.percentile(f_far_post, 3, axis=1)
+f_far_high = np.percentile(
+    f_far_post, 97, axis=1
+)
+
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.fill_between(
+    X_far.ravel(), f_far_low, f_far_high,
+    alpha=0.2, color="C1",
+)
+ax.plot(
+    X_far.ravel(), f_far_mean,
+    color="C1", lw=2,
+)
+ax.plot(
+    year_frac, co2_obs,
+    lw=0.6, color="C0", alpha=0.6,
+)
+ax.axvline(
+    year_frac[-1], ls=":", color="gray", lw=1
+)
+ax.set_xlabel("Year (from start)")
+ax.set_ylabel("CO₂ (ppm)")
+fig.tight_layout()
+plt.show()
+```
+
+Without modulation, the pure periodic kernel assumes the
+seasonal pattern stays exactly the same amplitude forever.
+The credible band for the seasonal component stays narrow
+even five years out. With the `Periodic × ExpQuad` modulation,
+the model allows the seasonal amplitude to drift, producing
+wider bands further from the data---which is more honest about
+the true uncertainty.
+:::
