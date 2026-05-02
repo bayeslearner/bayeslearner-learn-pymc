@@ -77,10 +77,13 @@ and you happen to know their shoe size, go ahead. But if you try to
 shoes---nothing changes.
 
 The distinction Thomas Wiecki draws is sharp: "The purpose of data
-science is to make better *actions*. And if we want actions that lead
-to desirable outcomes, we need to understand what causes what." A
-prediction model tells you what to expect. A causal model tells you
-what to do.
+science is to make better *actions*, not forecasts." He spent a
+decade trying to explain Bayesian modeling to businesses, and this
+framing is what finally landed. A prediction model tells you what
+to expect. A causal model tells you what to *do*. If you want
+actions that lead to desirable outcomes, you need to understand
+what causes what---and that requires a different kind of model
+than the one that minimizes prediction error.
 
 ### The fundamental problem of causal inference
 
@@ -136,11 +139,22 @@ print(f"Naive difference in means: {naive_diff:.2f}")
 
 The naive comparison is biased because older people are more likely
 to receive treatment *and* have higher outcomes. The raw difference
-mixes the causal effect with the confounding effect of age. This is
-exactly the situation the tea-and-death example from Benjamin
-Vincent's CausalPy talk illustrates: in observational data, tea
-drinkers died more---not because tea kills, but because older people
-drink more tea and are more likely to die.
+mixes the causal effect with the confounding effect of age.
+
+Benjamin Vincent, creator of the CausalPy package, illustrates this
+trap vividly with a simulated tea-and-death example. Among 5,000
+simulated people, observational data shows that 70% of deaths
+occurred among tea drinkers---tea appears deadly. But age is the
+confounder: older people drink more tea *and* are more likely to
+die. When Vincent simulates a randomized trial on the same
+population---assigning tea or no-tea randomly so that age no longer
+confounds---the result flips: 70% of deaths are among non-tea
+drinkers. Tea is actually protective. Same population, same death
+mechanism, opposite conclusions---all because confounding was
+present in the observational data and absent in the randomized
+design. This is Simpson's paradox in its sharpest form, and it
+underscores why causal reasoning, not just statistical association,
+must guide decisions.
 
 
 ## The Bayesian Advantage for Causal Inference
@@ -148,13 +162,19 @@ drink more tea and are more likely to die.
 Why bring Bayes into causal inference? Three reasons, each
 practical.
 
-**1. Bayesian models naturally express causal structure.** When you
-write a PyMC model, you specify how variables generate other
-variables---a directed, structural story about the data. That story
-*is* a causal model. As Wiecki puts it: "We don't call it structural
-causal modeling, we call it the data generative process. But
-nonetheless, those two things are the same just through a different
-lens."
+**1. Bayesian models naturally encode causal assumptions via
+DAGs.** When you write a PyMC model, you specify how variables
+generate other variables---a directed, structural story about the
+data. That story *is* a causal model. As Thomas Wiecki argues in
+his causal inference talk, the data generative process that you
+write down in probabilistic code is a structural causal model:
+"We don't call it structural causal modeling, we call it the data
+generative process. But nonetheless, those two things are the same
+just through a different lens." Every `pm.Normal(mu=f(parent))`
+line is an edge in a DAG. Every prior you omit is a variable you
+assume is independent. The structural choices you make when writing
+a PyMC model *are* causal assumptions---you might as well make
+them deliberately.
 
 **2. Priors encode domain knowledge.** In causal inference, you
 always need assumptions---which variables confound which, what
@@ -174,8 +194,27 @@ statements without a statistics degree.
 
 These advantages compound. You build a structural model (advantage 1),
 pour in what you know (advantage 2), and get honest, interpretable
-uncertainty about the causal effect (advantage 3). The rest of this
-chapter shows you how.
+uncertainty about the causal effect (advantage 3).
+
+Wiecki also warns against letting the fear of misspecification
+paralyze you: "It's great to be wrong, because model criticism---
+posterior predictive checks, domain expert feedback---quickly
+identifies what's wrong. Better to start simple and iterate than to
+get frozen by fear of the wrong structure." This iterative stance
+is the Bayesian workflow applied to causal questions: commit to a
+structural model, check its implications, revise, repeat.
+
+When randomization is impossible---when ethical, practical, or
+historical constraints prevent you from assigning treatments---
+quasi-experimental designs offer a middle path. Benjamin Vincent's
+CausalPy package brings synthetic control, interrupted time series,
+regression discontinuity, and difference-in-differences into the
+Bayesian framework, making it possible to estimate causal effects
+from observational data under weaker (but explicit) assumptions.
+We will cover interrupted time series later in this chapter; the
+other designs extend the same logic to different settings.
+
+The rest of this chapter shows you how.
 
 
 ## DAGs and Causal Graphs

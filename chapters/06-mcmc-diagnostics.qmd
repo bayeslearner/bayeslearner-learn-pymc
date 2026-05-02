@@ -251,10 +251,27 @@ plt.tight_layout()
 plt.show()
 ```
 
-Notice how the random walk takes *tiny* steps along the narrow ridge of the correlated
-distribution. The chain "mixes" slowly---it takes thousands of iterations to traverse the
-posterior. This is the fundamental limitation of Metropolis-Hastings: it does not know
-the *shape* of the posterior. It proposes blindly.
+Notice how the random walk takes *tiny* steps along the narrow
+ridge of the correlated distribution. The chain "mixes"
+slowly---it takes thousands of iterations to traverse the
+posterior. This is the fundamental limitation of
+Metropolis-Hastings: it does not know the *shape* of the
+posterior. It proposes blindly.
+
+The problem gets worse fast as dimensionality grows. Chris
+Fonnesbeck, one of PyMC's core developers, explains why:
+"Metropolis fails in high dimensions due to the curse of
+dimensionality." The root cause is geometric. In high
+dimensions, most of the posterior's probability mass
+concentrates in a thin shell far from the mode---not at the
+mode itself. A random-walk proposal that is tuned for one
+region of this shell is almost certainly a bad fit for
+another. The acceptance rate collapses, and the chain
+effectively freezes. For a $d$-dimensional target, the
+optimal proposal scale shrinks as $O(d^{-1/2})$, so each
+accepted step covers less and less ground. By the time you
+reach 50 or 100 parameters---routine in hierarchical
+models---Metropolis is practically useless.
 
 
 ## Hamiltonian Monte Carlo
@@ -550,9 +567,19 @@ draw.
 
 ## Divergences: The Most Important Warning
 
-When PyMC reports divergences, **stop and fix the model.** A divergence means the
-leapfrog integrator could not accurately simulate the Hamiltonian dynamics---the
-numerical trajectory diverged from the true one.
+When PyMC reports divergences, **stop and fix the model.** A
+divergence means the leapfrog integrator could not accurately
+simulate the Hamiltonian dynamics---the numerical trajectory
+diverged from the true one.
+
+Thomas Wiecki offers a useful reframe: "A model is fine if the
+sampler is fine; divergences suggest the sampler can't handle
+the geometry, not that the model is wrong." In other words,
+divergences are not saying your *scientific* model is bad---they
+are saying the *parameterization* creates a posterior shape that
+the sampler cannot navigate. The fix is almost always geometric
+(reparameterize, adjust priors, or increase `target_accept`),
+not conceptual (throw out the model and start over).
 
 **What causes divergences?**
 
@@ -633,9 +660,15 @@ divergences_fixed = trace_fixed.sample_stats["diverging"].values.sum()
 print(f"Divergences after fix: {divergences_fixed}")
 ```
 
-2. **Increase `target_accept`** (temporary band-aid). Setting `target_accept=0.95` or
-   `0.99` forces a smaller step size. This may eliminate divergences but makes sampling
-   slower:
+2. **Increase `target_accept`** (temporary band-aid). Setting
+   `target_accept=0.95` or `0.99` forces a smaller step size,
+   which lets the leapfrog integrator navigate tighter
+   curvature without diverging. As Fonnesbeck notes, a larger
+   `target_accept` in the range 0.9--0.99 reduces divergences
+   at the cost of speed: smaller steps mean more leapfrog
+   evaluations per sample, so each draw takes longer. This is
+   a trade-off, not a free lunch---but it is often enough to
+   eliminate a handful of stubborn divergences.
 
 ```python
 pm.sample(draws=2000, target_accept=0.95)
@@ -804,8 +837,19 @@ print(f"Non-centered model divergences: {divs_nc}")
 print(az.summary(trace_noncentered, var_names=["sigma"])[["mean", "ess_bulk"]])
 ```
 
-The non-centered version eliminates (or greatly reduces) divergences and yields higher
-ESS for the hierarchical standard deviation `sigma`.
+The non-centered version eliminates (or greatly reduces)
+divergences and yields higher ESS for the hierarchical
+standard deviation `sigma`.
+
+Wiecki is blunt about the current state of affairs: "Most of
+the problem with Bayesian stats today is all these
+re-parameterization tricks." The fact that a mathematically
+identical model can sample beautifully or terribly depending
+on how you write it down is a real usability problem.
+Projects like automatic reparameterization aim to eliminate
+this manual step, but for now, knowing when and how to apply
+the non-centered trick is one of the most valuable practical
+skills in Bayesian modeling.
 
 
 ## Scaling Up

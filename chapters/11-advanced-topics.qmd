@@ -422,6 +422,19 @@ with small groups---VI may significantly understate the uncertainty.
 MCMC for your final, reportable results. If VI and MCMC give you
 substantially different answers, trust MCMC.
 
+Austin Rochford and Daniel Coyle, in their PyData talks on
+variational inference, offer a complementary perspective: ADVI is
+"good enough" when your goal is *relative model comparison* (which
+of five models fits best?), *fast prototyping* (does this model
+structure capture the signal at all?), or *warm-starting MCMC*
+(use VI's optimum as initialization for NUTS). Where you *need*
+MCMC is when the decision depends on tail probabilities ("what is
+the chance of ruin?"), when you need calibrated credible intervals
+for regulatory or stakeholder reporting, or when the model has
+strong funnel geometry that mean-field VI cannot represent. In
+short: VI answers "is this roughly right?" while MCMC answers "how
+right, exactly?"
+
 
 ## Custom Distributions
 
@@ -591,6 +604,11 @@ of existing PyMC documentation still references Theano or Aesara.
    the graph for numerical stability and speed. For example,
    `log(1 - exp(x))` is automatically replaced with a specialized
    `log1mexp` operation that avoids catastrophic cancellation.
+   As Bill Engels (PyMC developer) puts it: "PyTensor's graph
+   rewrites are magical and underappreciated"---users write math
+   naturally, and the backend silently replaces Cholesky inversions
+   with more stable decompositions, eliminates redundant matrix
+   multiplications, and fuses element-wise operations.
 
 4. **Multiple backends.** The same graph can be compiled to C code
    (the default), Numba (for JIT compilation), or JAX (for GPU
@@ -1099,7 +1117,32 @@ worth the extra computational cost.
 ## The PyMC Ecosystem
 
 PyMC is the core, but it sits at the center of a growing ecosystem
-of libraries that build on it. Here are the ones worth knowing about.
+of libraries that build on it. In his "State of the Art" talks at
+PyData conferences, Wiecki describes the evolution of PyMC as a
+progression from a single sampling library (PyMC2, pure Python) to
+a full probabilistic programming platform (PyMC 5+, with PyTensor
+as the computation engine, multiple backends, and an ecosystem of
+domain-specific packages built on top).
+
+The JAX backend is central to this vision. JAX gives PyMC access
+to GPU/TPU hardware, XLA compilation, and efficient vectorized
+sampling---which means business-scale models with tens of thousands
+of parameters (hierarchical marketing mix models, large GPs) can
+sample in minutes rather than hours. Wiecki frames this as the
+transition from "toy models in notebooks" to "production inference
+at company scale."
+
+A key piece of the roadmap is **automated reparameterization**.
+Brendan Willard's Symbolic Piracy project aims to detect
+problematic posterior geometry (the "funnel of doom" from
+hierarchical models) and automatically apply non-centered
+parameterization at the graph level---no manual intervention
+required. As Wiecki notes: "Most of the problem with Bayesian
+stats today is all these re-parameterization tricks." If Symbolic
+Piracy succeeds, the user writes the natural model and PyTensor
+rewrites it into a sampler-friendly form transparently.
+
+Here are the ecosystem libraries worth knowing about.
 
 ### Bambi: formula-based models
 

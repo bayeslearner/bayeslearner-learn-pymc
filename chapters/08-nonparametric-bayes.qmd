@@ -714,7 +714,52 @@ As Chris Fonnesbeck put it in his PyCon 2018 talk: "The number of
 parameters you end up using scales with the size of the data, and
 that's what we want. If you don't have much data, you shouldn't be
 using very many parameters. If you have lots of data, you should be
-using more."
+using more." More bluntly, Fonnesbeck calls Gaussian processes
+"mindless nonlinear regression---you don't have to think about the
+parametric form." You specify smoothness assumptions (via the
+kernel) rather than functional form, and the GP handles the rest.
+
+### Beyond Gaussian likelihoods: GP meets GLM
+
+The real power of GPs as nonparametric building blocks emerges
+when you pair them with non-Gaussian likelihoods---the same
+link-function idea from generalized linear models, but with a GP
+replacing the linear predictor.
+
+Fonnesbeck demonstrates two compelling examples in his PyCon 2018
+talk. The first is **coal mining disasters**: a classic data set
+of yearly disaster counts in British coal mines from 1851 to 1962.
+The count data calls for a Poisson likelihood, but the disaster
+rate clearly changes over time. Instead of guessing a parametric
+form for the rate (constant? piecewise? exponential decay?), you
+model the log-rate as a latent GP. The GP discovers that the rate
+drops sharply around 1890---coinciding with new safety
+regulations---with honest uncertainty bands around the entire
+trajectory. This is a Poisson-GP: count data with a latent
+nonparametric intensity.
+
+The second example is **measles confirmation bias by age**:
+reported measles cases include both true cases and false positives
+(misdiagnosis). The false-positive rate varies with age---young
+children and older adults are misdiagnosed at different rates. A
+binomial likelihood with an inverse-logit link maps a latent GP
+over age to a probability of true measles. The GP reveals an
+age-varying confirmation bias curve without committing to a
+parametric shape. This is a binomial-GP: binary or proportional
+data with a nonparametric probability surface.
+
+Both examples follow the same recipe:
+
+1. Choose a likelihood matching your data type (Poisson for
+   counts, Binomial for proportions, Bernoulli for binary).
+2. Use a link function (log, logit) to map a latent GP into the
+   likelihood's parameter space.
+3. Fit with `pm.gp.Latent` (since the marginal likelihood trick
+   only works for Gaussian likelihoods).
+
+This is the GP as a universal building block for nonparametric
+regression: wherever you would put a linear predictor in a GLM,
+you can substitute a GP and let the data determine the shape.
 
 Here's a quick reminder of what GP regression looks like in PyMC,
 for comparison with the DPMM we just built:
@@ -777,7 +822,10 @@ tool. Here is a decision guide:
   parametric form (polynomial, spline, etc.).
 - You need uncertainty bands around your function estimate.
 - Your data are one- or low-dimensional. (GPs scale as $O(n^3)$
-  without approximations.)
+  without approximations---but sparse approximations with $m$
+  inducing points reduce this to $O(nm^2)$. Fonnesbeck suggests
+  a rule of thumb of $m \approx \sqrt{n}$ as a starting point
+  for the number of inducing points.)
 
 **Use a parametric model when:**
 

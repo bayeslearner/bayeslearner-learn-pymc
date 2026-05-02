@@ -327,6 +327,23 @@ They should be nearly identical. With weakly informative priors and
 enough data, Bayesian estimation converges to the maximum likelihood
 estimate --- which, for normal errors, is exactly OLS.
 
+::: {.callout-tip}
+## A quick sanity check for any Bayesian model
+
+Chris Fonnesbeck offers a simple diagnostic: "The posterior
+should sit between the prior and the likelihood --- if it does
+not, check your model." For our linear model, the posterior
+means land between the prior means (zero, from our weakly
+informative priors) and the maximum likelihood estimates (the
+OLS values). Because the priors are wide and the data are
+plentiful, the posterior is pulled almost entirely toward the
+data. If the posterior were *outside* the range spanned by the
+prior and the likelihood --- for instance, farther from zero
+than the OLS estimate despite a prior centred at zero --- that
+would signal a coding error or a misspecified model. Get in the
+habit of checking this before interpreting results.
+:::
+
 But the Bayesian version gives you something OLS does not (at least
 not as naturally): the **full posterior distribution**, not just point
 estimates. Let us compare the confidence intervals from OLS with the
@@ -869,6 +886,28 @@ outliers are not removed; they are simply given less influence because
 the model expects them. This is a fundamentally different philosophy:
 instead of cleaning data to fit the model, you adjust the model to fit
 the data.
+
+::: {.callout-note}
+## Why heavy tails matter: a lesson from finance
+
+Thomas Wiecki puts it bluntly: "The Normal distribution assumes
+2008-scale crashes never happen; the Student-$t$ is more honest."
+Under a Gaussian likelihood, a six-sigma event has a probability
+on the order of $10^{-9}$. In financial data, such events happen
+every few years. The Normal model is not just slightly wrong ---
+it is *systematically* blind to the most consequential
+observations.
+
+The practical advice is simple: whenever your data could
+plausibly contain extreme values --- financial returns, insurance
+claims, network traffic, sensor readings in harsh environments
+--- default to a heavy-tailed likelihood. The Student-$t$ with a
+learned $\nu$ is the easiest upgrade: if the data are well
+behaved, $\nu$ will be estimated large and the model reduces to
+a Normal. If the data have genuine heavy tails, $\nu$ shrinks
+and the model accommodates them. You pay almost nothing for this
+insurance.
+:::
 
 Let us check the inferred degrees of freedom:
 

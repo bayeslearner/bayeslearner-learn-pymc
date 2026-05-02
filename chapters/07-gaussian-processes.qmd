@@ -170,6 +170,40 @@ back a matrix. Different kernels produce different matrices, and
 different matrices produce different families of functions. The
 kernel is the GP's personality.
 
+### GPs as Continuous Hierarchical Models
+
+If you have worked through the hierarchical models chapter, you
+already have the core intuition for GPs. Bill Engels, a principal
+data scientist at PyMC Labs, frames the connection this way:
+"Gaussian processes are an extension of hierarchical models.
+Non-centered parameterization pulls information from similar
+groups; GPs do this continuously."
+
+In a hierarchical model, you have discrete groups (players,
+schools, hospitals), and the group-level prior pools information
+across groups---shrinking extreme estimates toward the overall
+mean. A GP does the same thing, but instead of discrete groups,
+you have a continuous input (age, time, spatial coordinates).
+Observations at nearby inputs are pooled more strongly than
+observations at distant inputs, with the kernel controlling "how
+nearby is nearby."
+
+Think of the covariance matrix. In a hierarchical model with
+exchangeable groups, the covariance is diagonal---each group gets
+the same prior variance but no direct correlation between groups.
+The moment you add a covariate like age, pure exchangeability
+breaks: a 25-year-old player is more similar to a 26-year-old
+than to a 40-year-old. A GP fills in the off-diagonal entries of
+the covariance matrix according to a kernel function, encoding
+exactly this "similar inputs should have similar outputs" belief.
+
+Engels illustrates this with Dodgers 2023 slugging percentage
+(SLG) by player age: a hierarchical model estimates individual
+player effects, but adding a GP over age reveals a smooth age
+curve that peaks around 26 and drops sharply after---pooling
+information continuously across the age dimension in a way that
+discrete grouping cannot.
+
 
 ## Kernels: Encoding Prior Beliefs
 
@@ -406,10 +440,47 @@ roughly 0.3 and 5, discouraging both implausibly short
 lengthscales (which would fit noise) and implausibly long ones
 (which would flatten the function to a line). Getting the
 lengthscale prior right is the single most important modeling
-decision in GP work---Bill Engels, a principal data scientist at
-PyMC Labs, emphasizes that "you need to be really mindful and
-careful about how you're setting priors on the GP
-hyperparameters."
+decision in GP work---Bill Engels emphasizes that "you need to
+be really mindful and careful about how you're setting priors on
+the GP hyperparameters."
+
+Two pitfalls make this choice harder than it looks. First, as
+Engels notes, "data is informative of the *product* of scale
+times length-scale, not each separately." The amplitude $\eta$
+and lengthscale $\ell$ trade off against each other: a large
+amplitude with a short lengthscale can produce similar fits to a
+small amplitude with a long lengthscale. This creates a ridge in
+the posterior that the sampler must navigate. Placing informative
+priors on at least one of the two parameters breaks the
+degeneracy.
+
+Second, "once length scale is less than the data resolution, MCMC
+meanders in flat space---useless" (Engels). If your inputs are
+measured in years, a lengthscale of 0.01 years means the GP
+thinks the function can change completely between data points that
+are one year apart. The data cannot constrain what happens between
+observations, so the sampler wanders aimlessly. Always set the
+lengthscale prior's lower bound at or above the spacing between
+your observations.
+
+::: {.callout-tip}
+## PC priors vs. inverse-gamma for the lengthscale
+
+Two common prior families serve different modeling goals:
+
+- **Penalized complexity (PC) priors** have a long right tail,
+  allowing the lengthscale to go to infinity (a flat function).
+  Use PC priors when "no effect" is a plausible outcome and you
+  want the data to have to earn any wiggles.
+- **Inverse-gamma priors** concentrate mass away from both zero
+  and infinity. Use inverse-gamma when you believe the function
+  *must* vary---a flat function is scientifically implausible---
+  and you want to prevent the lengthscale from escaping to
+  infinity.
+
+Engels's rule of thumb: "PC prior for 'allow flat'; inverse-gamma
+for 'no flat.' Choose based on domain knowledge."
+:::
 
 **Amplitude prior.** `HalfNormal(2)` allows the function to have
 moderate vertical range without going wild.
@@ -529,11 +600,16 @@ Which kernel should you use? Here are practical rules of thumb:
 smooth kernel and works surprisingly well for many problems. If
 the fit looks good, you are done.
 
-**Switch to Matérn-5/2 if the SE over-smooths.** Real-world
-functions are often not infinitely differentiable. The Matérn-5/2
-is twice differentiable---smooth enough to avoid jitter, rough
-enough to follow data that has sharper features. Many practitioners
-treat Matérn-5/2 as their default instead of the SE.
+**Switch to Matérn-5/2 if the SE over-smooths---or just start
+there.** Real-world functions are often not infinitely
+differentiable. The Matérn-5/2 is twice differentiable---smooth
+enough to avoid jitter, rough enough to follow data that has
+sharper features. Chris Fonnesbeck argues that the "default
+kernel should be Matérn-5/2, not the exponential quadratic---it's
+too smooth, it won't fit the data" in many practical settings. The
+SE's infinite smoothness looks elegant in theory but imposes a
+stronger assumption than most data warrant. Many practitioners
+now treat Matérn-5/2 as the default first choice.
 
 **Add a periodic kernel if you see seasonality.** If the data has
 a clear repeating pattern (daily, weekly, annual), add a periodic
@@ -656,6 +732,20 @@ The inducing points $\mathbf{X}_u$ are typically initialized as a
 uniform grid over the input range. With 25 training points, sparse
 approximations are overkill---you would use them when $n$ reaches
 the thousands.
+
+Fonnesbeck demonstrates the practical range of GPs in his PyCon
+2018 talk with two contrasting examples. The first is **salmon
+recruitment**: a classic spawner-recruit relationship where the
+number of returning salmon saturates as spawner density increases.
+The relationship is clearly nonlinear but has no standard
+parametric form---a GP captures the saturation naturally with
+only a few dozen observations. The second is **Boston Marathon
+finishing times**: 27,000 runners, far too many for an exact GP.
+Fonnesbeck uses sparse approximations with K-means inducing
+points to fit a GP over age, revealing the characteristic
+performance curve across the field. The contrast illustrates
+when to use exact versus sparse GPs---and that sparse methods
+genuinely work at scale.
 
 ### HSGP: Hilbert Space Gaussian Process
 

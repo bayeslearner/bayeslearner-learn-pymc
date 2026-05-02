@@ -18,9 +18,12 @@ decision using loss functions and expected utility.
 
 The core insight, which Thomas Wiecki (CEO of PyMC Labs and
 co-creator of PyMC) has emphasized in talks across PyCon and PyData
-conferences, is this: Bayesian models do not just give you better
+conferences, is this: "Don't output p-values; output decisions with
+uncertainty quantified." Bayesian models do not just give you better
 estimates. They give you *decisions*. A posterior is not the finish
-line; it is the input to a decision rule.
+line; it is the input to a decision rule. Or, as Wiecki puts it
+more precisely: "Prior + data + loss = actionable decisions, not
+'significant or not.'"
 
 ```{python}
 #| label: setup
@@ -37,6 +40,34 @@ from scipy import special
 rng = default_rng(42)
 print(f"PyMC {pm.__version__}, ArviZ {az.__version__}")
 ```
+
+
+## The Three Stages of Modeling Maturity
+
+Before we dive into specific business problems, it helps to
+understand where most organizations sit on the modeling maturity
+ladder. Wiecki identifies three stages that companies move through:
+
+1. **Stage 1: Implicit models (spreadsheets).** Everyone already
+   has a model---it is the mental model in the CMO's head, encoded
+   in an Excel formula. "We spend X, we get Y." No uncertainty,
+   no structure, no feedback loop.
+
+2. **Stage 2: Formalized statistical models with uncertainty.**
+   The same relationships are written as explicit probabilistic
+   models. Now you can quantify how confident you are, test
+   assumptions, and update as new data arrives.
+
+3. **Stage 3: Complex structured models.** Hierarchical pooling
+   across channels, time-varying parameters, spatial structure,
+   Gaussian processes on coefficients. These capture the reality
+   that business systems are not static or independent.
+
+Most teams are stuck at Stage 1---or at best, Stage 2 with
+point-estimate models that hide uncertainty. The tools in this
+chapter take you from Stage 2 to Stage 3, where the real leverage
+is. As Wiecki notes: "Everyone is already a modeler; formalize it
+and add uncertainty."
 
 
 ## Why Bayesian for Business?
@@ -225,6 +256,17 @@ department asks: "How much does each channel contribute to sales?"
 You spend money on TV, online ads, radio, social media. Which
 channels are pulling their weight, and where should you shift
 budget?
+
+To ground this in reality: Wiecki describes the case of MetalFresh
+(a meal-kit company), which spent hundreds of millions on marketing
+across dozens of channels. Their initial linear model estimated a
+customer acquisition cost (CAC) of \$648 for one channel---above
+the \$630 break-even threshold. Conclusion: cut the channel. But
+when they added saturation effects (diminishing returns at high
+spend), the optimal strategy changed entirely. The linear model
+gave one answer; saturation effects changed the optimal strategy.
+This is why model structure matters for decisions, not just for
+fit.
 
 This is harder than it sounds for two reasons:
 
@@ -637,6 +679,25 @@ here illustrates the idea; for real CLV work, use the library.
 :::
 
 
+::: {.callout-note}
+## Bayesian Models in Biotech and Agriculture
+
+The same hierarchical + loss-function framework applies far beyond
+marketing. Wiecki describes work with Indigo Agriculture, where
+corn yield varies by 30% across plot positions due to unmeasured
+spatial confounders (water accumulation, soil chemistry). A
+Gaussian process on spatial coordinates decomposes yield into
+treatment effect plus latent spatial noise---letting them estimate
+treatment effects from small field trials (50 data points per
+field) by pooling length-scale estimates hierarchically across
+fields. The insight generalizes: whenever you have structured
+nuisance variation and care about isolating a treatment effect,
+hierarchical Bayesian models let you "spend all your modeling
+effort on things you don't care about (spatial effects) to
+isolate what you do care about (treatment)."
+:::
+
+
 ## Demand Forecasting {#sec-demand}
 
 Demand forecasting is time series prediction with consequences.
@@ -880,6 +941,15 @@ plug into any loss function*. The loss function is where the
 business context enters. Two companies with the same posterior but
 different cost structures will make different decisions---and that
 is correct.
+
+A crucial framing from Wiecki's PyCon 2023 talk: "Don't maximize
+expected returns; minimize probability of ruin." When allocating
+budget across marketing channels or selecting investment strategies
+from a portfolio, the naive approach maximizes the expected outcome.
+But in practice, a strategy with slightly lower expected return but
+much lower variance is often preferable---especially when a bad
+outcome means running out of money entirely. The loss function
+should encode *survival*, not just profit.
 
 ### Example: pricing optimization
 

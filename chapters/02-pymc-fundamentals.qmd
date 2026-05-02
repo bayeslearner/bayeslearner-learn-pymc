@@ -338,6 +338,19 @@ with height_model:
 
 ### What Just Happened?
 
+::: {.callout-tip}
+## The magic inference button
+
+Chris Fonnesbeck calls `pm.sample()` "the magic inference
+button --- just call `sample()` with no arguments." That is barely
+an exaggeration. PyMC selects the NUTS sampler, tunes its step
+size and mass matrix, runs multiple chains, and checks for
+convergence --- all from a single function call. You specified
+*what* the model is; PyMC figured out *how* to fit it. This
+separation of model from computation is what makes probabilistic
+programming powerful.
+:::
+
 `pm.sample()` ran the **NUTS sampler** (No U-Turn Sampler), which
 is a variant of Hamiltonian Monte Carlo. You do not need to
 understand the sampler's internals to use PyMC effectively, but
@@ -351,6 +364,16 @@ probability regions) and less time on the peaks (low probability
 regions). The "No U-Turn" part means it automatically decides how
 far to roll the ball before stopping---you do not need to tune
 this.
+
+Fonnesbeck offers another analogy: think of NUTS as a
+skateboarder in a half-pipe. The skateboarder uses *momentum* to
+glide through the curved surface, naturally spending more time
+near the bottom (high-probability regions) and arcing up the
+sides (low-probability regions) before gravity pulls them back.
+Unlike a simple random walk that stumbles around blindly, the
+skateboarder exploits the *geometry* of the surface. That is
+why NUTS can handle hundreds or thousands of parameters where
+simpler samplers like Metropolis would crawl.
 
 ### The Key Parameters
 
@@ -494,6 +517,18 @@ The summary includes:
 - **ess_bulk** and **ess_tail**: Effective sample size. Higher is
   better. If these are very low relative to your total draws, the
   sampler is struggling.
+
+::: {.callout-warning}
+## Convergence: the one number you must check
+
+As Fonnesbeck emphasises: "You want $\hat{R}$ close to one;
+a potential scale reduction factor greater than 1.01 signals
+non-convergence." If any parameter has $\hat{R} > 1.01$, stop
+interpreting your results. The chains have not agreed on where the
+posterior is, and any summary statistic you compute is unreliable.
+Run longer, reparameterise, or simplify the model before drawing
+conclusions.
+:::
 
 ### Extracting Specific Quantities
 
@@ -1212,6 +1247,44 @@ the observed data peaks around 4--6 minutes. This suggests a Gamma
 or LogNormal likelihood might be more appropriate. Posterior
 predictive checks revealing model inadequacy is exactly how they
 are supposed to work.
+:::
+
+
+::: {.callout-note}
+## Prediction without refitting: the mutable data pattern
+
+A practical pattern Fonnesbeck highlights is *mutable data*.
+After fitting a model, you often want predictions on new inputs
+without re-running the sampler. PyMC's `pm.Data` containers
+let you swap observed data after fitting:
+
+```python
+with pm.Model() as model:
+    x = pm.Data("x", x_train)
+    # ... define priors and likelihood using x ...
+    trace = pm.sample()
+
+    # Swap in new data, no re-sampling needed
+    pm.set_data({"x": x_new})
+    ppc = pm.sample_posterior_predictive(trace)
+```
+
+This is critical for practical workflows --- you fit once, then
+generate posterior predictive samples for as many new inputs as
+you like.
+:::
+
+::: {.callout-tip}
+## Turning the Bayesian crank
+
+Fonnesbeck captures a key Bayesian insight: "You can always turn
+the Bayesian crank --- take your posterior as the prior for new
+data." This is sequential updating in action. When new data
+arrives, you do not start over; your posterior from the first
+batch of data *becomes* your prior for the second batch. The
+math guarantees that updating sequentially gives the same result
+as updating all at once (we proved this in Chapter 1, Exercise
+1). In practice, this means Bayesian models learn continuously.
 :::
 
 

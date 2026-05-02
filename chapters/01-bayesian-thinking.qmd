@@ -16,6 +16,24 @@ The frequentist asks: **"If I repeated this experiment many times, what would I 
 
 That's the practical divide. It's not a philosophical debate about the nature of probability (though you can find plenty of those online). It's about which question is more useful for the problem in front of you.
 
+::: {.callout-note}
+## The case for Bayesian thinking
+
+As Chris Fonnesbeck puts it, "statistical literacy is about
+making inferences from incomplete or error-contaminated data."
+That is the real job description --- not computing test
+statistics, but reasoning under uncertainty. The Bayesian
+framework makes this explicit: every conclusion is a probability
+statement conditioned on what you observed.
+
+Thomas Wiecki takes this further: "Everyone is already a modeler;
+formalize it and add uncertainty." When a product manager
+eyeballs a trend line and says "sales are up," they are fitting
+an implicit model in their head --- with no error bars. Bayesian
+statistics simply writes that model down and adds the uncertainty
+that the mental model leaves out.
+:::
+
 ### A coin-flip example
 
 Suppose you flip a coin 10 times and get 7 heads. Is the coin fair?
@@ -245,6 +263,19 @@ This is the fundamental mechanism of Bayesian learning: data overwhelms weak pri
 ## Priors: What You Know Before Seeing Data
 
 Choosing a prior is the part of Bayesian analysis that makes people nervous. "Isn't it subjective?" Yes — but so is choosing which variables to include in your model, which observations to exclude, and which likelihood to use. The prior just makes your assumptions explicit rather than hidden.
+
+::: {.callout-tip}
+## On subjectivity in statistics
+
+Chris Fonnesbeck makes a pointed observation: "Subjective choices
+exist in all statistics --- choosing $\alpha = 0.05$ is arbitrary;
+just be honest about it." The frequentist who sets a significance
+threshold is making a subjective decision. The analyst who
+chooses which covariates to include is making a subjective
+decision. The Bayesian prior is no more subjective --- it is just
+more *visible*. Honesty about your assumptions, rather than
+burying them in defaults, is a feature.
+:::
 
 ### Types of priors
 
@@ -622,6 +653,23 @@ ax.legend()
 plt.tight_layout()
 plt.show()
 ```
+
+::: {.callout-note}
+## Conjugate priors in practice: baseball strikeout rates
+
+Chris Fonnesbeck uses a baseball example to illustrate how
+conjugate priors encode real domain knowledge. Suppose you want
+to estimate a pitcher's strikeout rate. With a Beta-Binomial
+model, you can work *backward* from what you know about the
+position: a power pitcher might have a prior of Beta(8, 3)
+(high strikeout rate expected), while a contact-oriented pitcher
+might start with Beta(3, 7). The conjugate update then combines
+this positional knowledge with observed performance. The
+posterior sits between the prior and the data --- if it does not,
+something is wrong with your model. This "working backward from
+domain knowledge to inform priors" is a pattern you will use
+repeatedly.
+:::
 
 ### Why modern Bayesian modeling doesn't rely on conjugacy
 

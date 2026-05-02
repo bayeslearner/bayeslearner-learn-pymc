@@ -21,9 +21,27 @@ good enough for the question you are trying to answer.
 
 This idea was formalized by @gelman2020bayesian, but practitioners have
 been doing it informally for decades. Thomas Wiecki, one of the creators
-of PyMC, puts it simply: "Start with something so simple it's almost
-certainly wrong, then find out *where* it's wrong, and fix that." The
-workflow makes this process systematic rather than ad hoc.
+of PyMC, puts it simply: "Start with the simplest model and slowly keep
+incorporating more structure." The workflow makes this process systematic
+rather than ad hoc.
+
+Wiecki describes three stages of modeling maturity that most teams pass
+through:
+
+1. **Stage 1: Implicit models.** Everyone uses models---even a
+   spreadsheet with `=AVERAGE(B2:B100)` is a model. But the assumptions
+   are hidden and uncertainty is ignored.
+2. **Stage 2: Statistical models with uncertainty.** You formalize the
+   model, fit it explicitly, and report uncertainty. This is where most
+   data science teams operate.
+3. **Stage 3: Complex structured models.** Hierarchical effects,
+   time-varying parameters, causal structure. This is where the real
+   leverage is, but few teams reach it because the workflow overhead
+   feels daunting.
+
+The Bayesian workflow is what makes Stage 3 practical. It gives you a
+systematic way to build complexity incrementally, catching mistakes at
+each step instead of debugging a monolithic model at the end.
 
 In this chapter you will learn the full cycle, step by step, and then
 run through it end-to-end on a real dataset. By the end you will have a
@@ -204,19 +222,43 @@ conditioning on any observed data. You draw parameter values from the
 prior distributions, push them through the model's likelihood, and
 generate synthetic datasets. If those synthetic datasets look nothing
 like data that could plausibly exist in the real world, your priors are
-wrong.
+wrong. As Chris Fonnesbeck, another PyMC core developer, advises:
+"Always visualize priors before fitting." It is the cheapest sanity
+check in the entire workflow.
 
-Thomas Wiecki demonstrates this vividly with COVID-19 case counts. His
-first model used wide, vague priors centered at zero for an exponential
-growth model. The prior predictive samples produced negative case counts
---- people "un-catching" the disease --- and downward slopes during an
-epidemic. The priors were physically impossible. No amount of data would
-fully compensate for that.
+Thomas Wiecki demonstrates this vividly with COVID-19 case counts. He
+started with the simplest possible model: an exponential growth curve
+for German confirmed cases over the first 30 days. The priors were wide
+and centered at zero---a common "let the data speak" default. The prior
+predictive samples immediately revealed the problem: negative case
+counts (people "un-catching" the disease), downward slopes during an
+epidemic, and wildly implausible trajectories. Worse, the sampler broke
+entirely---the mass matrix diagonal went to zero, a sign that the
+prior placed too much weight in degenerate regions of parameter space.
 
-The fix is not to make priors *tight*. It is to make them *plausible*.
-You are not trying to nail the answer ahead of time. You are trying to
-exclude nonsense. As Wiecki puts it: "If your priors produce humans that
-are 50 feet tall, the priors are wrong."
+The fix came in stages. First, Wiecki centered the intercept prior at
+100 (a known case-count threshold) and the slope prior at $\ln(1.33)$
+(doubling every three days, from early epidemiological literature).
+He switched the likelihood from Normal to negative binomial---a
+natural choice for count data with overdispersion. The prior
+predictive samples now produced trajectories that were all positive
+and increasing. The sampler converged cleanly.
+
+But the posterior predictive check revealed the next problem: the
+exponential model fit the first 30 days well but extrapolated to
+infinity. A logistic growth model, with a carrying capacity parameter
+bounded between 1,000 and 80 million, captured the leveling-off
+effect. LOO-CV confirmed that the logistic model beat the exponential.
+Each cycle of the workflow---prior check, fit, diagnose, posterior
+check, revise---pointed directly to what needed fixing.
+
+The lesson is not about COVID modeling specifically. It is about the
+workflow: start simple, let the diagnostics tell you what is wrong,
+fix that, and iterate. The fix is not to make priors *tight*. It is
+to make them *plausible*. You are not trying to nail the answer ahead
+of time. You are trying to exclude nonsense. As Wiecki puts it: "If
+your priors produce humans that are 50 feet tall, the priors are
+wrong."
 
 ### A first (bad) model
 

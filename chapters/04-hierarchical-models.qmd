@@ -289,9 +289,13 @@ add an L2 penalty to shrink all coefficients toward zero. A
 hierarchical model shrinks group parameters toward the *group mean*
 instead of zero, and the amount of shrinkage is learned from the
 data, not set by a hyperparameter grid search. Thomas Wiecki, one
-of PyMC's core developers, puts it this way: "It's basically a very
-clever and kind of automated way to have regression towards the
-group mean."
+of PyMC's core developers, frames it this way: "One way to view
+hierarchical models is as a form of regularization---you shrink
+everything toward the group mean, not zero." That distinction
+matters. L2 regularization assumes that the "default" parameter
+value is zero, which is arbitrary. Hierarchical shrinkage pulls
+toward the *empirical* group mean---a much more informative
+anchor, especially when some groups have little data.
 
 
 ## Building a Hierarchical Model in PyMC {#sec-radon}
@@ -623,7 +627,29 @@ Thomas Wiecki notes that in his experience, "90% of the models just
 seem to work fine, but once you get in more difficult territory,
 those 10% of cases where you start having divergences can be really
 difficult to deal with." The non-centered trick handles most of
-those cases.
+those cases. But Wiecki is candid about the state of the art:
+"Most of the problem with Bayesian stats today is all these
+re-parameterization tricks." The fact that you need to rewrite a
+mathematically identical model just to help the sampler is a known
+pain point; projects like automatic reparameterization aim to
+remove this burden eventually, but for now, knowing the
+non-centered trick is essential.
+
+How far can these models scale? Further than you might expect.
+At Quantopian, Wiecki's team built a hierarchical model with
+roughly 40,000 parameters to evaluate trading algorithms---and
+it "surprisingly worked fine with NUTS." Modern gradient-based
+samplers can handle high-dimensional hierarchical structure as
+long as the geometry is well-conditioned (i.e., you use the
+non-centered parameterization where needed). Do not let the
+parameter count scare you.
+
+One more piece of realism: "Real models are messier than blog
+posts---you only see the ones that worked," Wiecki warns.
+Tutorial examples converge on the first try because they are
+chosen *for* that property. In practice, expect to iterate:
+check diagnostics, reparameterize, adjust priors, and refit.
+The workflow in Chapter 5 gives you a systematic way to do this.
 
 
 ## Visualizing the Shrinkage {#sec-shrinkage}
@@ -996,6 +1022,17 @@ reduces to a regular model with no benefit.
 | Sports | Players | Performance metric |
 | Finance | Trading strategies | Returns |
 | Politics | Districts | Vote share |
+
+Wiecki describes a compelling example from psychology: a memory
+recognition experiment where subjects studied a list of words and
+were tested after varying delays. The decay in recognition
+accuracy over time was modeled as a hierarchical exponential.
+Most subjects had plenty of trials, but one subject had missing
+data for several delay conditions. Because the model shared
+information across subjects through the group-level prior, it
+could still infer that subject's decay curve from the other
+subjects' patterns. The group prior filled in exactly where the
+individual data was thin---partial pooling at work.
 
 As Hanna van der Vlis found at Apollo Agriculture when modeling
 maize yields across Kenyan counties, even when you exclude the
