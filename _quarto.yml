@@ -1,0 +1,86 @@
+project:
+  type: book
+  output-dir: _book
+  execute-dir: project
+
+book:
+  title: "Bayesian Modeling with PyMC"
+  subtitle: "From First Principles to Practice"
+  author:
+    - "Kun Deng"
+    - "Claude (Anthropic)"
+  date: today
+  chapters:
+    - index.qmd
+    - part: "Part I --- Foundations"
+      chapters:
+        - chapters/01-bayesian-thinking.qmd
+        - chapters/02-pymc-fundamentals.qmd
+        - chapters/03-mcmc-diagnostics.qmd
+    - part: "Part II --- Core Models"
+      chapters:
+        - chapters/04-linear-models.qmd
+        - chapters/05-glms.qmd
+        - chapters/06-hierarchical-models.qmd
+    - part: "Part III --- The Bayesian Workflow"
+      chapters:
+        - chapters/07-bayesian-workflow.qmd
+        - chapters/08-model-comparison.qmd
+    - part: "Part IV --- Advanced Methods"
+      chapters:
+        - chapters/09-gaussian-processes.qmd
+        - chapters/10-nonparametric-bayes.qmd
+        - chapters/11-causal-inference.qmd
+        - chapters/12-business-applications.qmd
+
+format:
+  html:
+    theme:
+      light:
+        - cosmo
+        - assets/custom.scss
+      dark: darkly
+    code-fold: false
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    highlight-style: github
+    mainfont: "STIX Two Text"
+    monofont: "Menlo"
+    html-math-method: mathjax
+    fig-responsive: true
+    fig-dpi: 150
+
+  pdf:
+    documentclass: scrbook
+    papersize: letter
+    fontsize: 11pt
+    mainfont: "STIX Two Text"
+    monofont: "Menlo"
+    mathfont: "STIX Two Math"
+    keep-tex: true
+    number-sections: true
+    toc: true
+    toc-depth: 3
+    geometry:
+      - top=1.2cm
+      - bottom=1.2cm
+      - left=1.5cm
+      - right=1.5cm
+    colorlinks: true
+    include-in-header:
+      text: |
+        \usepackage{amsmath,amssymb,amsthm}
+        \newtheorem{theorem}{Theorem}[chapter]
+        \newtheorem{definition}{Definition}[chapter]
+
+execute:
+  freeze: auto
+  echo: true
+  warning: false
+
+jupyter: pymc-venv
+
+crossref:
+  chapters: true

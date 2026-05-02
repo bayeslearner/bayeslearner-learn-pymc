@@ -1,0 +1,17 @@
+/*-- scss:defaults --*/
+$body-bg: #ffffff;
+$body-color: #2c2c2c;
+
+/*-- scss:rules --*/
+.sidebar .chapter-title {
+  font-size: 0.85rem !important;
+  text-transform: none !important;
+  border-bottom: none !important;
+}
+.sidebar a {
+  text-decoration: none !important;
+  border-bottom: none !important;
+}
+.chapter-title {
+  border-bottom: none !important;
+}

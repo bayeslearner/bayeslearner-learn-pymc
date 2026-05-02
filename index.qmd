@@ -1,0 +1,77 @@
+# Preface {.unnumbered}
+
+You took a statistics course in grad school. You learned about
+$p$-values, confidence intervals, maximum likelihood, and maybe
+even heard the word "Bayesian" in a lecture or two. Then you spent
+a decade building things --- writing Python, wrangling data, shipping
+models. The statistics got rusty. The Bayesian part never quite
+stuck.
+
+This book fixes that. It teaches **Bayesian modeling with PyMC** from
+first principles, assuming you know Python and have a faded memory
+of statistics. Every concept is introduced through code you can run,
+not notation you have to decode. Every model is built step by step,
+with explanations of *why* each choice is made --- not just what
+buttons to push.
+
+**Who this book is for.** Junior developers building data pipelines,
+beginning data analysts who want to move beyond point estimates, and
+fresh (or not-so-fresh) graduate students who need a clean, modern
+introduction to Bayesian methods. You should be comfortable with
+Python, NumPy, and pandas. Prior experience with PyMC is not
+assumed.
+
+**What you will learn:**
+
+- How to think about probability as a measure of uncertainty, not
+  just a long-run frequency
+- How to build, fit, and diagnose Bayesian models in PyMC
+- How to use hierarchical models to borrow strength across groups
+- How to check whether your model is any good (prior predictive
+  checks, posterior predictive checks, model comparison)
+- How to apply Gaussian processes, nonparametric Bayesian methods,
+  and causal inference in a Bayesian framework
+- How to solve real business problems (A/B testing, marketing mix,
+  demand forecasting) with Bayesian decision making
+
+**What this book is based on.** The content draws on over 40 talks
+from the PyMC and PyData communities, given by the creators and core
+developers of PyMC (Thomas Wiecki, Chris Fonnesbeck, Austin Rochford,
+and many others). We distilled their collective wisdom into a
+structured tutorial that builds from basics to advanced methods.
+
+## How to Read This Book
+
+Each chapter follows a consistent pattern:
+
+1. **The idea** --- what problem this method solves, in plain language
+2. **The math** --- just enough theory to understand what the code
+   does and why
+3. **The code** --- complete PyMC models you can run, with every line
+   explained
+4. **The diagnostics** --- how to check whether the model worked
+5. **The interpretation** --- what the results mean and how to
+   communicate them
+
+## Environment
+
+All code targets PyMC 5.x with ArviZ for diagnostics.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+```{python}
+#| echo: true
+#| label: version-check
+import pymc as pm
+import arviz as az
+import numpy as np
+import matplotlib.pyplot as plt
+
+print(f"PyMC:    {pm.__version__}")
+print(f"ArviZ:   {az.__version__}")
+print(f"NumPy:   {np.__version__}")
+```
