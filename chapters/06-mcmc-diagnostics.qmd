@@ -802,7 +802,10 @@ with pm.Model() as centered:
     mu = pm.Normal("mu", mu=0, sigma=10)
     sigma = pm.HalfNormal("sigma", sigma=5)
     theta = pm.Normal("theta", mu=mu, sigma=sigma, shape=n_groups)
-    pm.Normal("obs", mu=theta, sigma=1.0, observed=y)
+    pm.Normal(
+        "obs", mu=theta[:, None],
+        sigma=1.0, observed=y,
+    )
 
     trace_centered = pm.sample(
         draws=2000,
@@ -823,7 +826,10 @@ with pm.Model() as noncentered:
     sigma = pm.HalfNormal("sigma", sigma=5)
     theta_raw = pm.Normal("theta_raw", mu=0, sigma=1, shape=n_groups)
     theta = pm.Deterministic("theta", mu + sigma * theta_raw)
-    pm.Normal("obs", mu=theta, sigma=1.0, observed=y)
+    pm.Normal(
+        "obs", mu=theta[:, None],
+        sigma=1.0, observed=y,
+    )
 
     trace_noncentered = pm.sample(
         draws=2000,

@@ -416,6 +416,7 @@ with model_v1b:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
 ```
 
@@ -706,6 +707,7 @@ with model_v2:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
 ```
 
@@ -818,6 +820,7 @@ with model_v3:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
 
     ppc_v3 = pm.sample_posterior_predictive(
@@ -1040,6 +1043,7 @@ with pm.Model() as workflow_m1:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
 
     # Posterior predictive
@@ -1127,6 +1131,7 @@ with pm.Model() as workflow_m2:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
 
     ppc_m2 = pm.sample_posterior_predictive(
@@ -1424,6 +1429,7 @@ with pm.Model() as model_v4:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
 
 comparison_ex3 = az.compare(
@@ -1469,6 +1475,7 @@ with pm.Model() as ex4_linear:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
     ppc_lin = pm.sample_posterior_predictive(
         trace_lin,
@@ -1490,6 +1497,7 @@ with pm.Model() as ex4_quad:
         chains=4,
         random_seed=rng,
         return_inferencedata=True,
+        idata_kwargs={"log_likelihood": True},
     )
     ppc_quad = pm.sample_posterior_predictive(
         trace_quad,

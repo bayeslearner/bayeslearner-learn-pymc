@@ -574,7 +574,7 @@ ax.plot(
 )
 
 # PyMC posterior samples
-posterior_samples = az.extract(trace, var_names=["theta"])["theta"].values
+posterior_samples = trace.posterior["theta"].values.flatten()
 ax.hist(
     posterior_samples,
     bins=40,
@@ -757,7 +757,7 @@ print(f"95% Credible Interval (HDI): ({hdi_low:.3f}, {hdi_high:.3f})")
 # Visualize both intervals
 fig, ax = plt.subplots(figsize=(8, 4))
 
-mu_samples = az.extract(trace_normal, var_names=["mu"])["mu"].values
+mu_samples = trace_normal.posterior["mu"].values.flatten()
 ax.hist(mu_samples, bins=40, density=True, alpha=0.5, label="Posterior of μ")
 
 # Mark intervals
@@ -989,7 +989,7 @@ with pm.Model() as ab_model:
     )
 
 # P(B > A)
-diff_samples = az.extract(trace_ab, var_names=["diff"])["diff"].values
+diff_samples = trace_ab.posterior["diff"].values.flatten()
 prob_b_better = (diff_samples > 0).mean()
 print(f"P(Ad B > Ad A) = {prob_b_better:.3f}")
 print(f"Expected lift: {diff_samples.mean() * 100:.2f} percentage points")

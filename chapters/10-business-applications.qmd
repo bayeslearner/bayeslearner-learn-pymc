@@ -171,7 +171,7 @@ with pm.Model() as ab_model:
 
     idata_ab = pm.sample(
         draws=4000, tune=2000,
-        chains=4, random_seed=rng,
+        chains=4, random_seed=42,
     )
 ```
 
@@ -465,7 +465,7 @@ with pm.Model(
 
     idata_mmm = pm.sample(
         draws=2000, tune=2000,
-        chains=4, random_seed=rng,
+        chains=4, random_seed=42,
         target_accept=0.9,
     )
 ```
@@ -631,7 +631,7 @@ with pm.Model() as clv_model:
 
     idata_clv = pm.sample(
         draws=1000, tune=1000,
-        chains=4, random_seed=rng,
+        chains=4, random_seed=42,
         target_accept=0.9,
     )
 ```
@@ -819,7 +819,7 @@ with pm.Model() as demand_model:
 
     idata_demand = pm.sample(
         draws=2000, tune=1000,
-        chains=4, random_seed=rng,
+        chains=4, random_seed=42,
     )
 ```
 
@@ -1001,7 +1001,7 @@ with pm.Model() as pricing_model:
 
     idata_pricing = pm.sample(
         draws=2000, tune=1000,
-        chains=4, random_seed=rng,
+        chains=4, random_seed=42,
     )
 ```
 
@@ -1104,12 +1104,12 @@ for name, rate_samples in actions.items():
         * rev_per_conversion
     )
     expected_revenue[name] = revenue.mean()
-    lo = np.percentile(revenue, 5)
-    hi = np.percentile(revenue, 95)
+    lo_rev = np.percentile(revenue, 5)
+    hi_rev = np.percentile(revenue, 95)
     print(
         f"{name}: E[revenue] = "
         f"${expected_revenue[name]:,.0f}  "
-        f"[${lo:,.0f}, ${hi:,.0f}]"
+        f"[${lo_rev:,.0f}, ${hi_rev:,.0f}]"
     )
 
 # Step 5: choose
@@ -1299,7 +1299,7 @@ with pm.Model() as case_model:
 
     idata_case = pm.sample(
         draws=4000, tune=2000,
-        chains=4, random_seed=rng,
+        chains=4, random_seed=42,
     )
 ```
 

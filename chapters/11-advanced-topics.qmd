@@ -216,9 +216,10 @@ for i, var_name in enumerate(["mu", "sigma"]):
     ax = axes[i]
 
     # MCMC posterior
-    mcmc_samples = az.extract(
-        trace_mcmc, var_names=[var_name]
-    ).values.flatten()
+    mcmc_samples = (
+        trace_mcmc.posterior[var_name]
+        .values.flatten()
+    )
     ax.hist(
         mcmc_samples,
         bins=50,
@@ -228,9 +229,10 @@ for i, var_name in enumerate(["mu", "sigma"]):
     )
 
     # VI posterior
-    vi_samples = az.extract(
-        trace_vi, var_names=[var_name]
-    ).values.flatten()
+    vi_samples = (
+        trace_vi.posterior[var_name]
+        .values.flatten()
+    )
     ax.hist(
         vi_samples,
         bins=50,
@@ -381,12 +383,14 @@ fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 for i, var_name in enumerate(["mu_pop", "sigma_pop"]):
     ax = axes[i]
 
-    mcmc_vals = az.extract(
-        trace_hier_mcmc, var_names=[var_name]
-    ).values.flatten()
-    vi_vals = az.extract(
-        trace_hier_vi, var_names=[var_name]
-    ).values.flatten()
+    mcmc_vals = (
+        trace_hier_mcmc.posterior[var_name]
+        .values.flatten()
+    )
+    vi_vals = (
+        trace_hier_vi.posterior[var_name]
+        .values.flatten()
+    )
 
     ax.hist(
         mcmc_vals,
@@ -864,28 +868,32 @@ def hmm_logp(y_vals, mu0, mu1, sd, p_trans):
 
     # Initial state: uniform
     log_alpha = pt.stack([
-        pt.log(pt.as_tensor_variable(0.5)) + logp0[0],
-        pt.log(pt.as_tensor_variable(0.5)) + logp1[0],
+        pt.log(pt.constant(0.5)) + logp0[0],
+        pt.log(pt.constant(0.5)) + logp1[0],
     ])
 
     log_trans = pt.log(p_trans)
 
-    def forward_step(logp0_t, logp1_t, log_alpha_prev):
+    def forward_step(
+        logp0_t, logp1_t, log_alpha_prev, log_t
+    ):
         """One step of the forward algorithm."""
-        # For each current state, sum over previous states
+        # For each current state, sum over previous
         log_alpha_0 = pt.logsumexp(
-            log_alpha_prev + log_trans[:, 0]
+            log_alpha_prev + log_t[:, 0]
         ) + logp0_t
         log_alpha_1 = pt.logsumexp(
-            log_alpha_prev + log_trans[:, 1]
+            log_alpha_prev + log_t[:, 1]
         ) + logp1_t
         return pt.stack([log_alpha_0, log_alpha_1])
 
-    # Scan over time steps 1..T
+    # Scan over time steps 1..T (pass log_trans
+    # as non_sequences so gradients work)
     log_alphas, _ = pytensor.scan(
         fn=forward_step,
         sequences=[logp0[1:], logp1[1:]],
         outputs_info=log_alpha,
+        non_sequences=[log_trans],
     )
 
     # Total log-likelihood: logsumexp of final alpha
@@ -1254,7 +1262,7 @@ repository has the details.
 ## Exercises
 
 **Exercise 1: VI convergence.** Build a Bayesian logistic regression
-model with 5 predictors and 10,000 observations. Fit it with both
+model with 5 predictors and 5,000 observations. Fit it with both
 MCMC and ADVI. Compare: (a) wall-clock time, (b) posterior means,
 (c) posterior standard deviations. How much faster is ADVI? How
 much narrower are its posteriors?
@@ -1265,7 +1273,7 @@ much narrower are its posteriors?
 ```{python}
 #| label: ex1-solution
 # Generate logistic regression data
-n_ex1 = 10_000
+n_ex1 = 5_000
 p_ex1 = 5
 X_ex1 = rng.normal(size=(n_ex1, p_ex1))
 true_beta = np.array([0.5, -1.0, 0.3, 0.8, -0.5])
@@ -1277,8 +1285,12 @@ y_ex1 = rng.binomial(n=1, p=probs)
 import time
 
 with pm.Model() as logreg:
-    beta = pm.Normal("beta", mu=0, sigma=2, shape=p_ex1)
-    intercept = pm.Normal("intercept", mu=0, sigma=5)
+    beta = pm.Normal(
+        "beta", mu=0, sigma=2, shape=p_ex1,
+    )
+    intercept = pm.Normal(
+        "intercept", mu=0, sigma=5,
+    )
     p = pm.math.sigmoid(
         pm.math.dot(X_ex1, beta) + intercept
     )
@@ -1289,6 +1301,8 @@ with pm.Model() as logreg:
     trace_mcmc_ex1 = pm.sample(
         draws=1000,
         tune=1000,
+        chains=2,
+        cores=1,
         random_seed=42,
         progressbar=False,
     )
@@ -1502,9 +1516,10 @@ for label, trace in [
     ("Mean-field ADVI", trace_hier_vi),
     ("Full-rank ADVI", trace_fullrank),
 ]:
-    vals = az.extract(
-        trace, var_names=["sigma_pop"]
-    ).values.flatten()
+    vals = (
+        trace.posterior["sigma_pop"]
+        .values.flatten()
+    )
     ax.hist(
         vals,
         bins=40,

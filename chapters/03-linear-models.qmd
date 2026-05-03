@@ -943,43 +943,23 @@ you might see for new data, given everything the model has learned.
 # Predict on a grid of new sqft values using the simple model
 sqft_new = np.linspace(600, 3200, 100)
 
-with linear_model:
-    pm.set_data({"y_obs": np.zeros(len(sqft_new))})
-    # We need to rebuild mu for the new data
-    pass
+# Use the already-fitted trace to generate predictions
+# by computing mu and adding noise from the posterior
+beta_0_s = trace.posterior["beta_0"].values.flatten()
+beta_1_s = trace.posterior["beta_1"].values.flatten()
+sigma_s = trace.posterior["sigma"].values.flatten()
 
-# Easier approach: rebuild the model with shared variables
-with pm.Model() as pred_model:
-    beta_0 = pm.Normal("beta_0", mu=0, sigma=200)
-    beta_1 = pm.Normal("beta_1", mu=0, sigma=10)
-    sigma = pm.HalfNormal("sigma", sigma=50)
-
-    sqft_shared = pm.Data("sqft_data", df["sqft"].values)
-    mu = beta_0 + beta_1 * sqft_shared
-
-    y_obs = pm.Normal("y_obs", mu=mu, sigma=sigma, observed=df["price"].values)
-
-    # First, fit the model
-    trace_pred = pm.sample(
-        draws=2000,
-        tune=1000,
-        chains=4,
-        random_seed=42,
-    )
-
-    # Now swap in new x-values and generate predictions
-    pm.set_data({"sqft_data": sqft_new})
-    ppc = pm.sample_posterior_predictive(
-        trace_pred,
-        var_names=["y_obs"],
-        random_seed=42,
-    )
+# For each posterior sample, compute predicted y at new sqft
+y_pred_all = np.zeros((len(beta_0_s), len(sqft_new)))
+for i in range(len(beta_0_s)):
+    mu_i = beta_0_s[i] + beta_1_s[i] * sqft_new
+    y_pred_all[i] = rng.normal(mu_i, sigma_s[i])
 ```
 
 ```{python}
 #| label: fig-prediction
 #| fig-cap: "Posterior predictive distribution: the shaded band shows the 95% prediction interval, accounting for both parameter uncertainty and observation noise."
-y_pred = ppc.posterior_predictive["y_obs"].values.reshape(-1, len(sqft_new))
+y_pred = y_pred_all
 
 pred_mean = y_pred.mean(axis=0)
 pred_lower = np.percentile(y_pred, 2.5, axis=0)
@@ -1172,8 +1152,8 @@ with pm.Model() as clean_normal:
         tune=1000,
         chains=4,
         random_seed=42,
+        idata_kwargs={"log_likelihood": True},
     )
-    pm.compute_log_likelihood(trace_cn)
 
 with pm.Model() as clean_robust:
     b0 = pm.Normal("b0", mu=0, sigma=50)
@@ -1193,8 +1173,8 @@ with pm.Model() as clean_robust:
         tune=1000,
         chains=4,
         random_seed=42,
+        idata_kwargs={"log_likelihood": True},
     )
-    pm.compute_log_likelihood(trace_cr)
 
 comp = az.compare(
     {"Normal": trace_cn, "Student-t": trace_cr},
@@ -1222,15 +1202,10 @@ of the prediction.
 
 ```{python}
 #| label: ex4-solution
-with pred_model:
-    pm.set_data({"sqft_data": np.array([2000.0])})
-    ppc_new = pm.sample_posterior_predictive(
-        trace_pred,
-        var_names=["y_obs"],
-        random_seed=42,
-    )
-
-y_new = ppc_new.posterior_predictive["y_obs"].values.flatten()
+# Predict for a single house using posterior samples
+sqft_single = 2000.0
+mu_new = beta_0_s + beta_1_s * sqft_single
+y_new = rng.normal(mu_new, sigma_s)
 print(f"Predicted price for 2000 sqft house:")
 print(f"  Posterior predictive mean: ${y_new.mean():.1f}k")
 hdi_94 = az.hdi(y_new, hdi_prob=0.94)

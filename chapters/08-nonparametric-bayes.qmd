@@ -436,9 +436,10 @@ with pm.Model() as dpmm:
     # Concentration parameter with a Gamma prior
     alpha = pm.Gamma("alpha", alpha=2, beta=1)
 
-    # Stick-breaking weights
+    # Stick-breaking weights (K = number of breaks;
+    # output has K+1 weights, so use K_max - 1)
     w = pm.StickBreakingWeights(
-        "w", alpha=alpha, K=K_max
+        "w", alpha=alpha, K=K_max - 1
     )
 
     # Component parameters
@@ -993,7 +994,7 @@ K_max_ex = 10
 with pm.Model() as faithful_dpmm:
     alpha_f = pm.Gamma("alpha", alpha=2, beta=1)
     w_f = pm.StickBreakingWeights(
-        "w", alpha=alpha_f, K=K_max_ex
+        "w", alpha=alpha_f, K=K_max_ex - 1
     )
     mu_f = pm.Normal(
         "mu", mu=65, sigma=15, shape=K_max_ex
@@ -1052,7 +1053,7 @@ for label, a_prior, b_prior in prior_specs:
             "alpha", alpha=a_prior, beta=b_prior
         )
         w_ex = pm.StickBreakingWeights(
-            "w", alpha=alpha_ex, K=15
+            "w", alpha=alpha_ex, K=14
         )
         mu_ex = pm.Normal(
             "mu", mu=0, sigma=10, shape=15

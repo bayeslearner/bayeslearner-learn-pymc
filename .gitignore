@@ -25,3 +25,5 @@ Thumbs.db
 
 # Transcripts (large, not needed in repo)
 transcripts/
+
+/.quarto/
