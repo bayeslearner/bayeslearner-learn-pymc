@@ -49,10 +49,8 @@ format:
     fig-responsive: true
     fig-dpi: 150
 
-    css:
-      - present-mode.css
-    include-after-body:
-      - present-mode.html
+    filters:
+      - present-mode
   pdf:
     documentclass: scrbook
     papersize: letter
